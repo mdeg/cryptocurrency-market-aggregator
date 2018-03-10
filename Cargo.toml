@@ -1,0 +1,15 @@
+[package]
+name = "market-aggregator"
+version = "0.1.0"
+authors = ["michael"]
+
+[dependencies]
+url = "*"
+env_logger = "*"
+serde = "*"
+serde_json = "*"
+serde_derive = "*"
+
+[dependencies.ws]
+version = "*"
+features = ["ssl"]
