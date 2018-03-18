@@ -4,7 +4,7 @@ pub enum Broadcast {
     Heartbeat {},
     #[serde(rename = "orderbookUpdate")]
     OrderbookUpdate {
-        seq_num: i32,
+        seq_num: i64,
         source: Exchange,
         pair: (String, String),
         bids: Vec<(i64, i64)>,
@@ -12,7 +12,7 @@ pub enum Broadcast {
     },
     #[serde(rename = "trade")]
     Trade {
-        seq_num: i32,
+        seq_num: i64,
         source: Exchange,
         pair: (String, String),
         trades: Vec<(i64, i64, i64, i64)>
@@ -34,10 +34,11 @@ pub enum Exchange {
 }
 
 pub trait MarketRunner<Request, Response> {
-    // TODO: make a macro for this
-    fn connect(&mut self, tx: ::ws::Sender, pairs: Vec<(String, String)>);
+    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<(String, String)>);
+
     fn map(&mut self, response: Response) -> Option<Broadcast>;
 
-    fn get_connect_addr() -> &'static str;
-    fn get_requests(pairs: Vec<(String, String)>) -> Vec<Request>;
+    fn get_connect_addr() -> ::url::Url;
+
+    fn get_requests(pairs: &[(String, String)]) -> Vec<Request>;
 }

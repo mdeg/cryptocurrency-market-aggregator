@@ -10,7 +10,7 @@ extern crate simplelog;
 // TODO: Poloniex support
 //mod poloniex;
 mod btcmarkets;
-//mod bitfinex;
+mod bitfinex;
 mod common;
 
 use std::thread;
@@ -45,7 +45,7 @@ fn main() {
 
     let tx = server.broadcaster();
     thread::spawn(move || {
-        let addr = ::std::net::SocketAddr::from_str("192.168.1.71:60400").unwrap();
+        let addr = ::std::net::SocketAddr::from_str("127.0.0.1:60400").unwrap();
         server.listen(addr).unwrap();
     });
 
@@ -56,10 +56,10 @@ fn main() {
     // TODO: better way of doing this than cloning
     let mut tx_in = tx.clone();
     let mut pairs_in = pairs.clone();
-//    thread::spawn(move || bitfinex::BitfinexMarketRunner{}.connect(tx_in, pairs_in));
+//    thread::spawn(move || bitfinex::BitfinexMarketRunner::connect(tx_in, pairs_in));
     tx_in = tx.clone();
     pairs_in = pairs.clone();
-    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::new().connect(tx_in, pairs_in));
+    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::connect(tx_in, pairs_in));
 
     // TODO: finish Poloniex support
 //    tx_in = tx.clone();

@@ -1,53 +1,73 @@
 use common::{Broadcast, Exchange};
 use common::MarketRunner;
 
-pub struct BitfinexMarketRunner;
+pub struct BitfinexMarketRunner {
+    broadcast_tx: ::ws::Sender,
+    pairs: Vec<(String, String)>,
+    out_tx: ::ws::Sender,
+    // TODO: increment this
+    seq_num: i64
+}
+
+impl ::ws::Handler for BitfinexMarketRunner {
+    fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
+        info!("[BITFINEX] Connected");
+
+        Self::get_requests(&self.pairs).iter().for_each(|req| {
+            match self.out_tx.send(::serde_json::to_string(&req).unwrap()) {
+                Ok(_) => info!("[BITFINEX] Sent {:?}", req),
+                Err(e) => error!("[BITFINEX] Failed to send request: {}", e)
+            }
+        });
+
+        Ok(())
+    }
+
+    fn on_message(&mut self, msg: ::ws::Message) -> ::ws::Result<()> {
+        debug!("[BITFINEX] Raw message: {}", msg);
+
+        match msg.into_text() {
+            Ok(txt) => {
+                match ::serde_json::from_str::<Response>(&txt) {
+                    Ok(response) => {
+                        if let Some(mapped) = self.map(response) {
+                            let serialized = ::serde_json::to_string(&mapped).unwrap();
+                            self.broadcast_tx.send(serialized).unwrap_or_else(|e| error!("[BITFINEX] Could not send broadcast: {}", e));
+                        }
+                    }
+                    Err(e) => error!("[BITFINEX] Could not deserialize message: {}", e)
+                }
+            },
+            Err(e) => error!("[BITFINEX] Could not convert Bitfinex message to text: {}", e)
+        };
+
+        Ok(())
+    }
+}
 
 impl MarketRunner<Request, Response> for BitfinexMarketRunner {
-    fn get_connect_addr() -> &'static str {
-        "wss://api.bitfinex.com/ws/2"
+    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<(String, String)>) {
+        let factory = BitfinexRunnerWsFactory { broadcast_tx, pairs };
+        let mut ws = ::ws::Builder::new().build(factory).unwrap();
+        ws.connect(Self::get_connect_addr()).unwrap();
+        ws.run().unwrap();
     }
 
-    fn connect(&mut self, tx: ::ws::Sender, pairs: Vec<(String, String)>) {
-        let requests = Self::get_requests(pairs);
-
-        ::ws::connect(Self::get_connect_addr(), move |out| {
-            info!("Successfully connected to Bitfinex");
-
-            requests.iter().for_each(|req| {
-                match out.send(::serde_json::to_string(&req).unwrap()) {
-                    Ok(_) => info!("Sent {:?} to Bitfinex", req),
-                    Err(e) => error!("Failed to send request to BtcMarkets: {}", e)
-                }
-            });
-
-            // Need to clone this to send into FnMut closure
-            let tx_in = tx.clone();
-            move |msg: ::ws::Message| {
-                debug!("Raw message from Bitfinex: {}", msg);
-
-                match msg.into_text() {
-                    Ok(txt) => {
-                        match ::serde_json::from_str::<Response>(&txt) {
-                            Ok(response) => {
-                                if let Some(mapped) = self.map(response) {
-                                    let serialized = ::serde_json::to_string(&mapped).unwrap();
-                                    tx_in.send(serialized).unwrap_or_else(|e| error!("Could not send broadcast: {}", e));
-                                }
-                            }
-                            Err(e) => error!("Could not deserialize Bitfinex message: {}", e)
-                        }
-                    },
-                    Err(e) => error!("Could not convert Bitfinex message to text: {}", e)
-                };
-
-                Ok(())
-            }
-        }).unwrap();
+    fn map(&mut self, response: Response) -> Option<Broadcast> {
+        match response {
+            Response::OrderbookUpdate(symbol, (_, price, amount)) => {
+                Some(self.map_orderbook_update(symbol, price, amount))
+            },
+            _ => None
+        }
     }
 
-    fn get_requests(pairs: Vec<(String, String)>) -> Vec<Request> {
-        pairs.into_iter().map(|(ref first, ref second)| {
+    fn get_connect_addr() -> ::url::Url {
+        ::url::Url::parse("wss://api.bitfinex.com/ws/2").unwrap()
+    }
+
+    fn get_requests(pairs: &[(String, String)]) -> Vec<Request> {
+        pairs.iter().map(|&(ref first, ref second)| {
             Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "book".to_string(),
@@ -59,13 +79,22 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
             }
         }).collect()
     }
+}
 
-    fn map(&mut self, response: Response) -> Option<Broadcast> {
-        match response {
-            Response::OrderbookUpdate(symbol, (_, price, amount)) => {
-                Some(self.map_orderbook_update(symbol, price, amount))
-            },
-            _ => None
+struct BitfinexRunnerWsFactory {
+    broadcast_tx: ::ws::Sender,
+    pairs: Vec<(String, String)>
+}
+
+impl ::ws::Factory for BitfinexRunnerWsFactory {
+    type Handler = BitfinexMarketRunner;
+
+    fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
+        BitfinexMarketRunner {
+            broadcast_tx: self.broadcast_tx.clone(),
+            pairs: self.pairs.clone(),
+            out_tx: sender,
+            seq_num: 0
         }
     }
 }
