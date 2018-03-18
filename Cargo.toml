@@ -9,6 +9,8 @@ env_logger = "*"
 serde = "*"
 serde_json = "*"
 serde_derive = "*"
+simplelog = "*"
+log = "*"
 
 [dependencies.ws]
 version = "*"

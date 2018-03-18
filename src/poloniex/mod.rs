@@ -1,109 +1,96 @@
-use Broadcast;
-use Exchange;
+use common::{Broadcast, Exchange, MarketRunner};
 
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-enum PoloniexRequest<T> {
-    JoinQueue {
-        command: String,
-        channel: T
+struct PoloniexMarketRunner;
+
+impl MarketRunner<Request, Response> for PoloniexMarketRunner {
+    fn get_connect_addr() -> &'static str {
+        "wss://api2.poloniex.com"
+    }
+
+    fn connect(&self, tx: ::ws::Sender, pairs: Vec<(String, String)>) {
+        let requests = Self::get_requests(pairs);
+
+        ::ws::connect(Self::get_connect_addr(), |out| {
+            info!("[POLONIEX] Connected");
+
+            requests.iter().for_each(|req| {
+                match out.send(::serde_json::to_string(&req).unwrap()) {
+                    Ok(_) => info!("[POLONIEX] Sent {:?}", req),
+                    Err(e) => error!("[POLONIEX] Failed to send request: {}", e)
+                }
+            });
+
+            let tx_in = tx.clone();
+            move |msg: ::ws::Message| {
+                debug!("[POLONIEX] Raw message: {}", msg);
+
+                match msg.into_text() {
+                    Ok(txt) => {
+                        match ::serde_json::from_str::<Response>(&txt) {
+                            Ok(response) => {
+                                if let Some(mapped) = self.map(response) {
+                                    let serialized = ::serde_json::to_string(&mapped).unwrap();
+                                    tx_in.send(serialized)
+                                        .unwrap_or_else(|e| error!("[POLONIEX] Could not broadcast: {}", e));
+                                }
+                            },
+                            Err(e) => error!("[POLONIEX] Could not deserialize message: {}", e)
+                        }
+                    },
+                    Err(e) => error!("[POLONIEX] Could not convert message to text: {}", e)
+                }
+
+                Ok(())
+            }
+        }).unwrap();
+    }
+
+    fn get_requests(pairs: Vec<(String, String)>) -> Vec<Request> {
+        pairs.into_iter().map(|(ref first, ref second)| {
+            Request::JoinQueue {
+                command: "subscribe".to_string(),
+                channel: format!("{}_{}", first, second)
+            }
+        }).collect()
+    }
+
+    fn map(&self, response: Response) -> Option<Broadcast> {
+        unimplemented!()
     }
 }
 
-fn connect(tx: ::ws::Sender, currency: &str, instrument: &str) {
-    let connect_addr = "wss://api2.poloniex.com";
-
-    let requests = vec!(
-        PoloniexRequest::JoinQueue::<String> {
-            command: "subscribe".to_string(),
-            //            channel: format!("{}_{}", currency, instrument)
-            channel: format!("{}_{}", "BTC", "XMR")
-        },
-//        PoloniexRequest::JoinQueue::<i32> {
-//            command: "subscribe".to_string(),
-//            channel: 1010
-//        }
-    );
-
-    ::ws::connect(connect_addr, |out| {
-        println!("Successfully connected to Poloniex");
-
-        requests.iter().for_each(|req| {
-            match out.send(::serde_json::to_string(&req).unwrap()) {
-                Ok(_) => println!("Sent {:?} to Poloniex", req),
-                Err(e) => println!("Failed to send request to Poloniex: {}", e)
-            }
-        });
-
-        let tmp = tx.clone();
-        move |msg: ::ws::Message| {
-
-            println!("Raw message: {}", msg);
-
-            if msg.is_text() {
-                match msg.into_text() {
-                    Ok(txt) => {
-                        // TODO: do this better
-                        if !txt.contains("type") {
-                            // untagged
-                            match ::serde_json::from_str::<UntaggedPoloniexResponse>(&txt) {
-                                Ok(response) => {
-                                    match response {
-                                        UntaggedPoloniexResponse::Error { reason } => {
-                                            println!("Received error from Poloniex! {}", reason);
-                                        },
-                                        _ => {}
-                                    }
-                                },
-                                Err(e) => panic!("Could not deserialize Poloniex message {}: {}", txt, e)
-                            };
-                        } else {
-                            match ::serde_json::from_str::<PoloniexResponse>(&txt) {
-                                Ok(response) => {
-                                    let serialized =
-                                        ::serde_json::to_string(&Broadcast::Heartbeat {}).unwrap();
-                                    if let Err(e) = tmp.send(serialized) {
-                                        println!("Could not send passthrough message: {}", e);
-                                    }
-                                },
-                                Err(e) => panic!("Could not deserialize Poloniex message {}: {}", txt, e)
-                            };
-                        }
-                    },
-                    Err(e) => println!("Could not convert text-based Poloniex message into text: {}", e)
-                };
-            } else {
-                println!("Binary message");
-            }
-
-            Ok(())
-        }
-    });
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum PoloniexResponse {
-    OrderBook (
-        i32, //currency pair ID
-        i64, //sequence number
-        ((
-            String, //value is "i". wtf?
-            TmpInternal
-        ))
-    )
+enum Response {
+    // TODO: custom deserialization for this
+    // currency_pair_id, sequence_number,
+    OrderBook(i32, i64, ((String /*value is always "i"*/, InternalOrderStructure))),
+    Error {
+        #[serde(rename = "error")]
+        reason: String
+    },
+    Heartbeat([i32; 1]),
+    HeartbeatFromHeartbeatChannel((i32, i64))
 }
 
 #[derive(Debug, Deserialize)]
-struct TmpInternal {
+struct InternalOrderStructure {
     #[serde(rename = "currencyPair")]
-    currency_pair_name: String,
+    currency_pair_string: String,
     #[serde(rename = "orderBook")]
     order_book: (Vec<(i64, i64)>, Vec<(i64, i64)>)
-//    order_book: (Vec<x:y>, Vec<x:y>)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Request {
+    JoinQueue {
+        command: String,
+        channel: String
+    }
+}
 
+// Responses for API v1 (defunct?)
 //#[derive(Debug, Deserialize)]
 //#[serde(tag = "type")]
 //enum PoloniexV1Response {
@@ -132,14 +119,3 @@ struct TmpInternal {
 //        trade_type: String
 //    }
 //}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum UntaggedPoloniexResponse {
-    Error {
-        #[serde(rename = "error")]
-        reason: String
-    },
-    Heartbeat([i32; 1]),
-    HeartbeatFromHeartbeatChannel((i32, i64))
-}
