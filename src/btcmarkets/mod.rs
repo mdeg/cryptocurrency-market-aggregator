@@ -1,9 +1,8 @@
 use common::{Broadcast, Exchange, MarketRunner};
 use std::collections::HashMap;
 
-pub type OrderbookBid = (i64, i64, i64); //price, amount, unknown (pair code?)
-pub type OrderbookAsk = OrderbookBid;
-type OrderbookBidsAndAsks = (Vec<OrderbookBid>, Vec<OrderbookAsk>);
+pub type OrderbookEntry = (i64, i64, i64); //price, amount, unknown (pair code?)
+type OrderbookBidsAndAsks = (Vec<OrderbookEntry>, Vec<OrderbookEntry>);
 
 pub struct BtcMarketsMarketRunner {
     orderbook_snapshots: HashMap<String, OrderbookBidsAndAsks>,
@@ -34,11 +33,10 @@ impl ::ws::Handler for BtcMarketsMarketRunner {
             Ok(txt) => {
                 match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
-                        if let Some(mapped) = self.map(response) {
-                            let serialized = ::serde_json::to_string(&mapped).unwrap();
-                            self.broadcast_tx.send(serialized)
-                                .unwrap_or_else(|e| error!("[BTCMarkets] Could not broadcast: {}", e));
-                        }
+                        self.map(response).into_iter()
+                            .map(|r| ::serde_json::to_string(&r).unwrap())
+                            .for_each(|msg| self.broadcast_tx.send(msg)
+                                .unwrap_or_else(|e| error!("[BTCMarkets] Could not broadcast: {}", e)))
                     },
                     Err(e) => error!("[BTCMarkets] Could not deserialize message: {}", e)
                 }
@@ -52,18 +50,16 @@ impl ::ws::Handler for BtcMarketsMarketRunner {
 
 impl BtcMarketsMarketRunner {
 
-    fn map_orderbook_change(&mut self, bids: Vec<OrderbookBid>, asks: Vec<OrderbookBid>) -> Option<Broadcast> {
+    fn map_orderbook_change(&mut self, bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
         // TODO
         let pair = ("XRP".to_string(), "BTC".to_string());
         let tmp_key = "XRPBTC".to_string();
 
         if !self.orderbook_snapshots.contains_key(&tmp_key) {
-            println!("Initial orderbook");
-
             self.orderbook_snapshots.insert(tmp_key, (bids.clone(), asks.clone()));
             self.seq_num += 1;
 
-            return Some(Broadcast::OrderbookUpdate {
+            return vec!(Broadcast::OrderbookUpdate {
                 seq_num: self.seq_num,
                 source: Exchange::BtcMarkets,
                 pair,
@@ -73,53 +69,41 @@ impl BtcMarketsMarketRunner {
         }
 
         let last_snapshot = self.orderbook_snapshots.get_mut(&tmp_key).unwrap();
-        let (new_bids, new_asks) = Self::diff_snapshot(last_snapshot, &bids, &asks);
+
+        let (removed_bids, new_bids) = Self::diff(&last_snapshot.0, &bids);
+        let (removed_asks, new_asks) = Self::diff(&last_snapshot.1, &asks);
         *last_snapshot = (bids, asks);
 
-        if new_bids.is_empty() && new_asks.is_empty() {
-            println!("No new orderbook updates");
-            None
-        } else {
-            println!("New stuff to print");
+        let mut responses = vec!();
 
-            self.seq_num += 1;
-
-            Some(Broadcast::OrderbookUpdate {
+        if !removed_bids.is_empty() || !removed_asks.is_empty() {
+            responses.push(Broadcast::OrderbookRemove {
                 seq_num: self.seq_num,
                 source: Exchange::BtcMarkets,
-                pair,
+                pair: pair.clone(),
+                bids: removed_bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
+                asks: removed_asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
+            });
+            self.seq_num += 1;
+        }
+
+        if !new_bids.is_empty() || !new_asks.is_empty() {
+            responses.push(Broadcast::OrderbookUpdate {
+                seq_num: self.seq_num,
+                source: Exchange::BtcMarkets,
+                pair: pair.clone(),
                 bids: new_bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
                 asks: new_asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
-            })
+            });
+            self.seq_num += 1;
         }
+
+        responses
     }
 
-    // Orderbook lists the top 50 bids and top 50 asks at the current time ordered by price
-    // Need to diff the snapshots to de-duplicate multiple bids
-    // TODO: proper filtering system: orderbook updates, orderbook removes
-    fn diff_snapshot(last_snapshot: &OrderbookBidsAndAsks,
-                     bids: &[OrderbookBid], asks: &[OrderbookBid]) -> OrderbookBidsAndAsks {
-
-        let tmp = "XRPBTC";
-
-        let new_bids = bids.iter()
-            .zip(&last_snapshot.0)
-            .take_while(|&(new, old)| *old != *new)
-            .map(|(new, _)| *new)
-            .inspect(|x| println!("debug new bid: {:?}", x))
-            .collect();
-
-        let new_asks = asks.iter()
-            .zip(&last_snapshot.1)
-            .take_while(|&(new, old)| *old != *new)
-            .map(|(new, _)| *new)
-            .inspect(|x| println!("debug new ask: {:?}", x))
-            .collect();
-
-        println!("new bids: {:?}", new_bids);
-        println!("new_asks: {:?}", new_asks);
-
-        (new_bids, new_asks)
+    fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
+        (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
+        second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
     }
 }
 
@@ -150,14 +134,14 @@ impl MarketRunner<Request, Response> for BtcMarketsMarketRunner {
         ws.run().unwrap();
     }
 
-    fn map(&mut self, response: Response) -> Option<Broadcast> {
+    fn map(&mut self, response: Response) -> Vec<Broadcast> {
         match response {
             Response::OrderbookChange { currency, instrument, bids, asks, .. } =>
                 self.map_orderbook_change(bids, asks),
 
             Response::Trade { currency, instrument, trades, .. } => {
                 self.seq_num += 1;
-                Some (
+                vec!(
                     Broadcast::Trade {
                         seq_num: self.seq_num,
                         source: Exchange::BtcMarkets,
@@ -166,7 +150,7 @@ impl MarketRunner<Request, Response> for BtcMarketsMarketRunner {
                     }
                 )
             }
-            _ => None
+            _ => vec!()
         }
     }
 
@@ -212,8 +196,8 @@ pub enum Response {
         market_id: i64,
         #[serde(rename = "snapshotId")]
         snapshot_id: i64,
-        bids: Vec<OrderbookBid>,
-        asks: Vec<OrderbookAsk>
+        bids: Vec<OrderbookEntry>,
+        asks: Vec<OrderbookEntry>
     },
     Trade {
         id: i64,

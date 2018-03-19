@@ -30,11 +30,11 @@ impl ::ws::Handler for BitfinexMarketRunner {
             Ok(txt) => {
                 match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
-                        if let Some(mapped) = self.map(response) {
-                            let serialized = ::serde_json::to_string(&mapped).unwrap();
-                            self.broadcast_tx.send(serialized).unwrap_or_else(|e| error!("[BITFINEX] Could not send broadcast: {}", e));
-                        }
-                    }
+                        self.map(response).into_iter()
+                            .map(|r| ::serde_json::to_string(&r).unwrap())
+                            .for_each(|msg| self.broadcast_tx.send(msg)
+                                .unwrap_or_else(|e| error!("[BITFINEX] Could not broadcast: {}", e)))
+                    },
                     Err(e) => error!("[BITFINEX] Could not deserialize message: {}", e)
                 }
             },
@@ -53,12 +53,12 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
         ws.run().unwrap();
     }
 
-    fn map(&mut self, response: Response) -> Option<Broadcast> {
+    fn map(&mut self, response: Response) -> Vec<Broadcast> {
         match response {
             Response::OrderbookUpdate(symbol, (_, price, amount)) => {
-                Some(self.map_orderbook_update(symbol, price, amount))
+                vec!(self.map_orderbook_update(symbol, price, amount))
             },
-            _ => None
+            _ => vec!()
         }
     }
 
