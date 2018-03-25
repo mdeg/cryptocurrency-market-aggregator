@@ -4,26 +4,23 @@ pub enum Broadcast {
     Heartbeat {},
     #[serde(rename = "orderbookUpdate")]
     OrderbookUpdate {
-        seq_num: i64,
         source: Exchange,
-        pair: (String, String),
+        pair: CurrencyPair,
         bids: Vec<(i64, i64)>,
         asks: Vec<(i64, i64)>
     },
     #[serde(rename = "orderbookRemove")]
     OrderbookRemove {
-        seq_num: i64,
         source: Exchange,
-        pair: (String, String),
+        pair: CurrencyPair,
         bids: Vec<(i64, i64)>,
         asks: Vec<(i64, i64)>
     },
     #[serde(rename = "trade")]
     Trade {
-        seq_num: i64,
         source: Exchange,
-        pair: (String, String),
-        trades: Vec<(i64, i64, i64, i64)>
+        pair: CurrencyPair,
+        trades: Vec<(i64, i64, i64, i64)> //ts, price, volume, total
     },
     #[serde(rename = "connected")]
     Connected {
@@ -42,11 +39,19 @@ pub enum Exchange {
 }
 
 pub trait MarketRunner<Request, Response> {
-    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<(String, String)>);
+    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>);
 
     fn map(&mut self, response: Response) -> Vec<Broadcast>;
 
     fn get_connect_addr() -> ::url::Url;
 
-    fn get_requests(pairs: &[(String, String)]) -> Vec<Request>;
+    fn get_requests(pairs: &[CurrencyPair]) -> Vec<Request>;
+
+    fn stringify_pair(pair: &CurrencyPair) -> String;
+}
+
+// TODO: put this in a parsed external file
+#[derive(Debug, Serialize, Copy, Clone)]
+pub enum CurrencyPair {
+    BTCXRP
 }

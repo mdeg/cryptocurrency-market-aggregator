@@ -1,12 +1,9 @@
-use common::{Broadcast, Exchange};
-use common::MarketRunner;
+use common::{Broadcast, Exchange, MarketRunner, CurrencyPair};
 
 pub struct BitfinexMarketRunner {
     broadcast_tx: ::ws::Sender,
-    pairs: Vec<(String, String)>,
-    out_tx: ::ws::Sender,
-    // TODO: increment this
-    seq_num: i64
+    pairs: Vec<CurrencyPair>,
+    out_tx: ::ws::Sender
 }
 
 impl ::ws::Handler for BitfinexMarketRunner {
@@ -46,7 +43,7 @@ impl ::ws::Handler for BitfinexMarketRunner {
 }
 
 impl MarketRunner<Request, Response> for BitfinexMarketRunner {
-    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<(String, String)>) {
+    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
         let factory = BitfinexRunnerWsFactory { broadcast_tx, pairs };
         let mut ws = ::ws::Builder::new().build(factory).unwrap();
         ws.connect(Self::get_connect_addr()).unwrap();
@@ -55,9 +52,16 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
 
     fn map(&mut self, response: Response) -> Vec<Broadcast> {
         match response {
-            Response::OrderbookUpdate(symbol, (_, price, amount)) => {
-                vec!(self.map_orderbook_update(symbol, price, amount))
+            Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
+                // TODO: map pair from channel_id
+                let pair = CurrencyPair::BTCXRP;
+                self.map_orderbook_update(pair, price, amount)
             },
+            Response::Trade(channel_id, trades) => {
+                let pair = CurrencyPair::BTCXRP;
+                self.map_trade(pair, trades)
+            }
+            // TODO: map initials
             _ => vec!()
         }
     }
@@ -66,24 +70,37 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
         ::url::Url::parse("wss://api.bitfinex.com/ws/2").unwrap()
     }
 
-    fn get_requests(pairs: &[(String, String)]) -> Vec<Request> {
-        pairs.iter().map(|&(ref first, ref second)| {
+    fn get_requests(pairs: &[CurrencyPair]) -> Vec<Request> {
+        pairs.iter().flat_map(|ref pair| { vec!(
+//            Request::JoinQueue {
+//                event: "subscribe".to_string(),
+//                channel: "book".to_string(),
+//                symbol: Self::stringify_pair(*pair),
+//                precision: Precision::R0,
+//                frequency: Frequency::F0,
+//                length: 100.to_string()
+//            },
             Request::JoinQueue {
                 event: "subscribe".to_string(),
-                channel: "book".to_string(),
-                //TODO: proper currency codes (order is not normalisable)
-                symbol: format!("t{}{}", second, first),
+                channel: "trades".to_string(),
+                symbol: Self::stringify_pair(*pair),
                 precision: Precision::R0,
                 frequency: Frequency::F0,
                 length: 100.to_string()
             }
-        }).collect()
+        )}).collect()
+    }
+
+    fn stringify_pair(pair: &CurrencyPair) -> String {
+        match *pair {
+            CurrencyPair::BTCXRP => "tXRPBTC"
+        }.to_string()
     }
 }
 
 struct BitfinexRunnerWsFactory {
     broadcast_tx: ::ws::Sender,
-    pairs: Vec<(String, String)>
+    pairs: Vec<CurrencyPair>
 }
 
 impl ::ws::Factory for BitfinexRunnerWsFactory {
@@ -93,23 +110,14 @@ impl ::ws::Factory for BitfinexRunnerWsFactory {
         BitfinexMarketRunner {
             broadcast_tx: self.broadcast_tx.clone(),
             pairs: self.pairs.clone(),
-            out_tx: sender,
-            seq_num: 0
+            out_tx: sender
         }
     }
 }
 
 impl BitfinexMarketRunner {
 
-    fn map_orderbook_update(&self, symbol: i32, price: f64, amount: f64) -> Broadcast {
-
-        //TODO: order deletion messages
-//    if price == 0 {
-//        // delete order
-//    } else {
-//
-//    }
-
+    fn map_orderbook_update(&self, pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
         let conv_price = (price * ::MULTIPLIER as f64) as i64;
         let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
 
@@ -121,14 +129,36 @@ impl BitfinexMarketRunner {
             asks.push((conv_price, conv_amount.abs()));
         }
 
-        Broadcast::OrderbookUpdate {
-            seq_num: 1,
-            source: Exchange::Bitfinex,
-            // TODO: work out channels for this
-            pair: ("XRP".to_string(), "BTC".to_string()),
-            bids,
-            asks
+        if conv_price == 0 {
+            vec!(Broadcast::OrderbookRemove {
+                source: Exchange::Bitfinex,
+                pair,
+                bids,
+                asks
+            })
+        } else {
+            vec!(Broadcast::OrderbookUpdate {
+                source: Exchange::Bitfinex,
+                pair,
+                bids,
+                asks
+            })
         }
+    }
+
+    fn map_trade(&self, pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
+        let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
+            let conv_price = (price * ::MULTIPLIER as f64) as i64;
+            let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+
+            (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
+        }).collect();
+
+        vec!(Broadcast::Trade {
+            source: Exchange::Bitfinex,
+            pair,
+            trades: trades_out
+        })
     }
 }
 
@@ -169,6 +199,8 @@ pub enum Response {
         length: String,
     },
     Heartbeat(i32, String), //channelid, string="hb"
+    // TODO: handle initials
+    Trade(i32, Vec<(i64, f64, f64, f64)>), //channelId, (orderId, ts, amount, price)
     InitialOrderbook(i32, Vec<(i64, f64, f64)>), //channelId, (orderid, price, amount)
     OrderbookUpdate(i32, (i64, f64, f64)) //channelId, (orderid, price, amount)
 }

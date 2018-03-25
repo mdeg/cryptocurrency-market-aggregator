@@ -16,7 +16,7 @@ mod common;
 use std::thread;
 use std::str::FromStr;
 use simplelog::*;
-use common::{MarketRunner, Broadcast};
+use common::{MarketRunner, Broadcast, CurrencyPair};
 
 const MULTIPLIER: i32 = 100000000;
 
@@ -50,16 +50,15 @@ fn main() {
     });
 
     // TODO: take list from args
-    let pair = (String::from("XRP"), String::from("BTC"));
-    let pairs = vec!(pair);
+    let pairs = vec!(CurrencyPair::BTCXRP);
 
     // TODO: better way of doing this than cloning
     let mut tx_in = tx.clone();
     let mut pairs_in = pairs.clone();
-//    thread::spawn(move || bitfinex::BitfinexMarketRunner::connect(tx_in, pairs_in));
+    thread::spawn(move || bitfinex::BitfinexMarketRunner::connect(tx_in, pairs_in));
     tx_in = tx.clone();
     pairs_in = pairs.clone();
-    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::connect(tx_in, pairs_in));
+//    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::connect(tx_in, pairs_in));
 
     // TODO: finish Poloniex support
 //    tx_in = tx.clone();
