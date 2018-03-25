@@ -58,7 +58,7 @@ fn main() {
     thread::spawn(move || bitfinex::BitfinexMarketRunner::connect(tx_in, pairs_in));
     tx_in = tx.clone();
     pairs_in = pairs.clone();
-//    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::connect(tx_in, pairs_in));
+    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::connect(tx_in, pairs_in));
 
     // TODO: finish Poloniex support
 //    tx_in = tx.clone();

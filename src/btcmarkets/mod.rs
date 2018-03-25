@@ -133,7 +133,7 @@ impl MarketRunner<Request, Response> for BtcMarketsMarketRunner {
                 self.map_orderbook_change(CurrencyPair::BTCXRP, bids, asks)
             },
             Response::Trade { currency, instrument, trades, .. } =>
-                vec!(Broadcast::Trade {
+                vec!(Broadcast::TradeSnapshot {
                         source: Exchange::BtcMarkets,
                         // TODO: convert pair
                         pair: CurrencyPair::BTCXRP,

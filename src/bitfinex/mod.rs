@@ -57,7 +57,7 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
                 let pair = CurrencyPair::BTCXRP;
                 self.map_orderbook_update(pair, price, amount)
             },
-            Response::Trade(channel_id, trades) => {
+            Response::Trade(channel_id, unknown_string, trades) => {
                 let pair = CurrencyPair::BTCXRP;
                 self.map_trade(pair, trades)
             }
@@ -72,14 +72,14 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
 
     fn get_requests(pairs: &[CurrencyPair]) -> Vec<Request> {
         pairs.iter().flat_map(|ref pair| { vec!(
-//            Request::JoinQueue {
-//                event: "subscribe".to_string(),
-//                channel: "book".to_string(),
-//                symbol: Self::stringify_pair(*pair),
-//                precision: Precision::R0,
-//                frequency: Frequency::F0,
-//                length: 100.to_string()
-//            },
+            Request::JoinQueue {
+                event: "subscribe".to_string(),
+                channel: "book".to_string(),
+                symbol: Self::stringify_pair(*pair),
+                precision: Precision::R0,
+                frequency: Frequency::F0,
+                length: 100.to_string()
+            },
             Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "trades".to_string(),
@@ -107,7 +107,7 @@ impl ::ws::Factory for BitfinexRunnerWsFactory {
     type Handler = BitfinexMarketRunner;
 
     fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
-        BitfinexMarketRunner {
+        Self::Handler {
             broadcast_tx: self.broadcast_tx.clone(),
             pairs: self.pairs.clone(),
             out_tx: sender
@@ -146,7 +146,19 @@ impl BitfinexMarketRunner {
         }
     }
 
-    fn map_trade(&self, pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
+    fn map_trade(&self, pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
+        let (order_id, ts, amount, price) = trade;
+        let conv_price = (price * ::MULTIPLIER as f64) as i64;
+        let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+
+        vec!(Broadcast::Trade {
+            source: Exchange::Bitfinex,
+            pair,
+            trade: (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
+        })
+    }
+
+    fn map_initial_trade(&self, pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
         let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
             let conv_price = (price * ::MULTIPLIER as f64) as i64;
             let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
@@ -154,7 +166,7 @@ impl BitfinexMarketRunner {
             (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
         }).collect();
 
-        vec!(Broadcast::Trade {
+        vec!(Broadcast::TradeSnapshot {
             source: Exchange::Bitfinex,
             pair,
             trades: trades_out
@@ -178,11 +190,11 @@ pub enum Response {
         pair: String,
         symbol: String,
         #[serde(rename = "prec")]
-        precision: Precision,
+        precision: Option<Precision>,
         #[serde(rename = "freq")]
-        frequency: Frequency,
+        frequency: Option<Frequency>,
         #[serde(rename = "len")]
-        length: String,
+        length: Option<String>,
     },
     SubscribeError {
         event: String,
@@ -199,10 +211,10 @@ pub enum Response {
         length: String,
     },
     Heartbeat(i32, String), //channelid, string="hb"
-    // TODO: handle initials
-    Trade(i32, Vec<(i64, f64, f64, f64)>), //channelId, (orderId, ts, amount, price)
+    InitialTrade(i32, Vec<(i64, f64, f64, f64)>), //channelId, (orderId, ts, amount, price)
     InitialOrderbook(i32, Vec<(i64, f64, f64)>), //channelId, (orderid, price, amount)
-    OrderbookUpdate(i32, (i64, f64, f64)) //channelId, (orderid, price, amount)
+    OrderbookUpdate(i32, (i64, f64, f64)), //channelId, (orderid, price, amount)
+    Trade(i32, String, (i64, f64, f64, f64)) //channelId, te/tu (?), (id, ts, amount, price)
 }
 
 // TODO: work out a way to do this inline in the enum

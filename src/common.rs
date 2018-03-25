@@ -16,11 +16,17 @@ pub enum Broadcast {
         bids: Vec<(i64, i64)>,
         asks: Vec<(i64, i64)>
     },
+    #[serde(rename = "tradeSnapshot")]
+    TradeSnapshot {
+        source: Exchange,
+        pair: CurrencyPair,
+        trades: Vec<(i64, i64, i64, i64)> //ts, price, volume, total
+    },
     #[serde(rename = "trade")]
     Trade {
         source: Exchange,
         pair: CurrencyPair,
-        trades: Vec<(i64, i64, i64, i64)> //ts, price, volume, total
+        trade: (i64, i64, i64, i64) //ts, price, volume, total
     },
     #[serde(rename = "connected")]
     Connected {
