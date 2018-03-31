@@ -1,3 +1,5 @@
+mod api;
+
 use common::{Broadcast, Exchange, MarketRunner, CurrencyPair};
 
 pub struct BitfinexMarketRunner {
@@ -25,7 +27,7 @@ impl ::ws::Handler for BitfinexMarketRunner {
 
         match msg.into_text() {
             Ok(txt) => {
-                match ::serde_json::from_str::<Response>(&txt) {
+                match ::serde_json::from_str::<api::Response>(&txt) {
                     Ok(response) => {
                         self.map(response).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
@@ -42,7 +44,7 @@ impl ::ws::Handler for BitfinexMarketRunner {
     }
 }
 
-impl MarketRunner<Request, Response> for BitfinexMarketRunner {
+impl MarketRunner<api::Request, api::Response> for BitfinexMarketRunner {
     fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
         let factory = BitfinexRunnerWsFactory { broadcast_tx, pairs };
         let mut ws = ::ws::Builder::new().build(factory).unwrap();
@@ -50,14 +52,14 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
         ws.run().unwrap();
     }
 
-    fn map(&mut self, response: Response) -> Vec<Broadcast> {
+    fn map(&mut self, response: api::Response) -> Vec<Broadcast> {
         match response {
-            Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
+            api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
                 // TODO: map pair from channel_id
                 let pair = CurrencyPair::BTCXRP;
                 self.map_orderbook_update(pair, price, amount)
             },
-            Response::Trade(channel_id, unknown_string, trades) => {
+            api::Response::Trade(channel_id, unknown_string, trades) => {
                 let pair = CurrencyPair::BTCXRP;
                 self.map_trade(pair, trades)
             }
@@ -70,22 +72,22 @@ impl MarketRunner<Request, Response> for BitfinexMarketRunner {
         ::url::Url::parse("wss://api.bitfinex.com/ws/2").unwrap()
     }
 
-    fn get_requests(pairs: &[CurrencyPair]) -> Vec<Request> {
+    fn get_requests(pairs: &[CurrencyPair]) -> Vec<api::Request> {
         pairs.iter().flat_map(|ref pair| { vec!(
-            Request::JoinQueue {
+            api::Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "book".to_string(),
                 symbol: Self::stringify_pair(*pair),
-                precision: Precision::R0,
-                frequency: Frequency::F0,
+                precision: api::Precision::R0,
+                frequency: api::Frequency::F0,
                 length: 100.to_string()
             },
-            Request::JoinQueue {
+            api::Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "trades".to_string(),
                 symbol: Self::stringify_pair(*pair),
-                precision: Precision::R0,
-                frequency: Frequency::F0,
+                precision: api::Precision::R0,
+                frequency: api::Frequency::F0,
                 length: 100.to_string()
             }
         )}).collect()
@@ -172,85 +174,5 @@ impl BitfinexMarketRunner {
             trades: trades_out
         })
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum Response {
-    Connected {
-        event: String,
-        version: i32,
-        platform: ConnectedResponsePlatform
-    },
-    SubscribeConfirmation {
-        event: String,
-        channel: String,
-        #[serde(rename = "chanId")]
-        channel_id: i32,
-        pair: String,
-        symbol: String,
-        #[serde(rename = "prec")]
-        precision: Option<Precision>,
-        #[serde(rename = "freq")]
-        frequency: Option<Frequency>,
-        #[serde(rename = "len")]
-        length: Option<String>,
-    },
-    SubscribeError {
-        event: String,
-        channel: String,
-        code: i32,
-        msg: String,
-        pair: String,
-        symbol: String,
-        #[serde(rename = "prec")]
-        precision: Precision,
-        #[serde(rename = "freq")]
-        frequency: Frequency,
-        #[serde(rename = "len")]
-        length: String,
-    },
-    Heartbeat(i32, String), //channelid, string="hb"
-    InitialTrade(i32, Vec<(i64, f64, f64, f64)>), //channelId, (orderId, ts, amount, price)
-    InitialOrderbook(i32, Vec<(i64, f64, f64)>), //channelId, (orderid, price, amount)
-    OrderbookUpdate(i32, (i64, f64, f64)), //channelId, (orderid, price, amount)
-    Trade(i32, String, (i64, f64, f64, f64)) //channelId, te/tu (?), (id, ts, amount, price)
-}
-
-// TODO: work out a way to do this inline in the enum
-#[derive(Debug, Deserialize)]
-pub struct ConnectedResponsePlatform {
-    status: i32
-}
-
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-pub enum Request {
-    JoinQueue {
-        event: String,
-        channel: String,
-        symbol: String,
-        #[serde(rename = "prec")]
-        precision: Precision,
-        #[serde(rename = "freq")]
-        frequency: Frequency,
-        #[serde(rename = "len")]
-        length: String
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum Precision {
-    R0,
-    P0,
-    P1,
-    P2,
-    P3
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum Frequency {
-    F0,
-    F1
 }
 
