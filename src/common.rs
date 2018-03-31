@@ -44,14 +44,23 @@ pub enum Exchange {
     Bitfinex
 }
 
-pub trait MarketRunner<Request, Response> {
-    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>);
+pub fn connect<T: ::ws::Factory + ConnectionFactory>(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
+    ::std::thread::spawn(move || {
+        let factory = T::new(broadcast_tx, pairs);
+        let mut ws = ::ws::Builder::new().build(factory).unwrap();
+        ws.connect(T::get_connect_addr()).unwrap();
+        ws.run().unwrap();
+    });
+}
 
-    fn map(&mut self, response: Response) -> Vec<Broadcast>;
+pub trait ConnectionFactory {
+    fn new(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) -> Self;
 
     fn get_connect_addr() -> ::url::Url;
+}
 
-    fn get_requests(pairs: &[CurrencyPair]) -> Vec<Request>;
+pub trait MarketHandler {
+    fn get_requests(pairs: &[CurrencyPair]) -> Vec<String>;
 
     fn stringify_pair(pair: &CurrencyPair) -> String;
 }

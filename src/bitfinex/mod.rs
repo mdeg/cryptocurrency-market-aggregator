@@ -1,22 +1,20 @@
 mod api;
 
-use common::{Broadcast, Exchange, MarketRunner, CurrencyPair};
+use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 
-pub struct BitfinexMarketRunner {
+pub struct BitfinexHandler {
     broadcast_tx: ::ws::Sender,
     pairs: Vec<CurrencyPair>,
     out_tx: ::ws::Sender
 }
 
-impl ::ws::Handler for BitfinexMarketRunner {
+impl ::ws::Handler for BitfinexHandler {
     fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
         info!("[BITFINEX] Connected");
 
-        Self::get_requests(&self.pairs).iter().for_each(|req| {
-            match self.out_tx.send(::serde_json::to_string(&req).unwrap()) {
-                Ok(_) => info!("[BITFINEX] Sent {:?}", req),
-                Err(e) => error!("[BITFINEX] Failed to send request: {}", e)
-            }
+        Self::get_requests(&self.pairs).into_iter().for_each(|req| {
+            self.out_tx.send(req)
+                .unwrap_or_else(|e| error!("[BITFINEX] Failed to send request: {}", e));
         });
 
         Ok(())
@@ -29,7 +27,7 @@ impl ::ws::Handler for BitfinexMarketRunner {
             Ok(txt) => {
                 match ::serde_json::from_str::<api::Response>(&txt) {
                     Ok(response) => {
-                        self.map(response).into_iter()
+                        Mapper::map(response).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
                             .for_each(|msg| self.broadcast_tx.send(msg)
                                 .unwrap_or_else(|e| error!("[BITFINEX] Could not broadcast: {}", e)))
@@ -44,35 +42,9 @@ impl ::ws::Handler for BitfinexMarketRunner {
     }
 }
 
-impl MarketRunner<api::Request, api::Response> for BitfinexMarketRunner {
-    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
-        let factory = BitfinexRunnerWsFactory { broadcast_tx, pairs };
-        let mut ws = ::ws::Builder::new().build(factory).unwrap();
-        ws.connect(Self::get_connect_addr()).unwrap();
-        ws.run().unwrap();
-    }
+impl MarketHandler for BitfinexHandler {
 
-    fn map(&mut self, response: api::Response) -> Vec<Broadcast> {
-        match response {
-            api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
-                // TODO: map pair from channel_id
-                let pair = CurrencyPair::BTCXRP;
-                self.map_orderbook_update(pair, price, amount)
-            },
-            api::Response::Trade(channel_id, unknown_string, trades) => {
-                let pair = CurrencyPair::BTCXRP;
-                self.map_trade(pair, trades)
-            }
-            // TODO: map initials
-            _ => vec!()
-        }
-    }
-
-    fn get_connect_addr() -> ::url::Url {
-        ::url::Url::parse("wss://api.bitfinex.com/ws/2").unwrap()
-    }
-
-    fn get_requests(pairs: &[CurrencyPair]) -> Vec<api::Request> {
+    fn get_requests(pairs: &[CurrencyPair]) -> Vec<String> {
         pairs.iter().flat_map(|ref pair| { vec!(
             api::Request::JoinQueue {
                 event: "subscribe".to_string(),
@@ -90,7 +62,7 @@ impl MarketRunner<api::Request, api::Response> for BitfinexMarketRunner {
                 frequency: api::Frequency::F0,
                 length: 100.to_string()
             }
-        )}).collect()
+        )}).map(|req| ::serde_json::to_string(&req).unwrap()).collect()
     }
 
     fn stringify_pair(pair: &CurrencyPair) -> String {
@@ -100,13 +72,23 @@ impl MarketRunner<api::Request, api::Response> for BitfinexMarketRunner {
     }
 }
 
-struct BitfinexRunnerWsFactory {
+pub struct BitfinexFactory {
     broadcast_tx: ::ws::Sender,
     pairs: Vec<CurrencyPair>
 }
 
-impl ::ws::Factory for BitfinexRunnerWsFactory {
-    type Handler = BitfinexMarketRunner;
+impl ConnectionFactory for BitfinexFactory {
+    fn new(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) -> Self {
+        Self { broadcast_tx, pairs }
+    }
+
+    fn get_connect_addr() -> ::url::Url {
+        ::url::Url::parse("wss://api.bitfinex.com/ws/2").unwrap()
+    }
+}
+
+impl ::ws::Factory for BitfinexFactory {
+    type Handler = BitfinexHandler;
 
     fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
         Self::Handler {
@@ -117,9 +99,27 @@ impl ::ws::Factory for BitfinexRunnerWsFactory {
     }
 }
 
-impl BitfinexMarketRunner {
+struct Mapper;
 
-    fn map_orderbook_update(&self, pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
+impl Mapper {
+
+    fn map(response: api::Response) -> Vec<Broadcast> {
+        match response {
+            api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
+                // TODO: map pair from channel_id
+                let pair = CurrencyPair::BTCXRP;
+                Self::map_orderbook_update(pair, price, amount)
+            },
+            api::Response::Trade(channel_id, unknown_string, trades) => {
+                let pair = CurrencyPair::BTCXRP;
+                Self::map_trade(pair, trades)
+            }
+            // TODO: map initial responses
+            _ => vec!()
+        }
+    }
+
+    fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
         let conv_price = (price * ::MULTIPLIER as f64) as i64;
         let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
 
@@ -148,7 +148,7 @@ impl BitfinexMarketRunner {
         }
     }
 
-    fn map_trade(&self, pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
+    fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
         let (order_id, ts, amount, price) = trade;
         let conv_price = (price * ::MULTIPLIER as f64) as i64;
         let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
@@ -160,7 +160,7 @@ impl BitfinexMarketRunner {
         })
     }
 
-    fn map_initial_trade(&self, pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
+    fn map_initial_trade(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
         let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
             let conv_price = (price * ::MULTIPLIER as f64) as i64;
             let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
@@ -175,4 +175,3 @@ impl BitfinexMarketRunner {
         })
     }
 }
-
