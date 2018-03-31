@@ -1,25 +1,25 @@
-use common::{Broadcast, Exchange, CurrencyPair, MarketRunner};
+mod api;
+
+use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
 
 pub type OrderbookEntry = (i64, i64, i64); //price, amount, unknown (pair code?)
 type OrderbookBidsAndAsks = (Vec<OrderbookEntry>, Vec<OrderbookEntry>);
 
-pub struct BtcMarketsMarketRunner {
+pub struct BtcmarketsHandler {
     orderbook_snapshots: HashMap<String, OrderbookBidsAndAsks>,
     broadcast_tx: ::ws::Sender,
     pairs: Vec<CurrencyPair>,
     out_tx: ::ws::Sender
 }
 
-impl ::ws::Handler for BtcMarketsMarketRunner {
+impl ::ws::Handler for BtcmarketsHandler {
     fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
         info!("[BTCMarkets] Connected");
 
-        BtcMarketsMarketRunner::get_requests(&self.pairs).iter().for_each(|req| {
-            match self.out_tx.send(::serde_json::to_string(&req).unwrap()) {
-                Ok(_) => info!("[BTCMarkets] Sent {:?}", req),
-                Err(e) => error!("[BTCMarkets] Failed to send request: {}", e)
-            }
+        Self::get_requests(&self.pairs).into_iter().for_each(|req| {
+            self.out_tx.send(req)
+                .unwrap_or_else(|e| error!("[BTCMarkets] Failed to send request: {}", e));
         });
 
         Ok(())
@@ -30,9 +30,9 @@ impl ::ws::Handler for BtcMarketsMarketRunner {
 
         match msg.into_text() {
             Ok(txt) => {
-                match ::serde_json::from_str::<Response>(&txt) {
+                match ::serde_json::from_str::<api::Response>(&txt) {
                     Ok(response) => {
-                        self.map(response).into_iter()
+                        Mapper::map(response, &mut self.orderbook_snapshots).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
                             .for_each(|msg| {
                                 self.broadcast_tx.send(msg)
@@ -49,13 +49,86 @@ impl ::ws::Handler for BtcMarketsMarketRunner {
     }
 }
 
-impl BtcMarketsMarketRunner {
 
-    fn map_orderbook_change(&mut self, pair: CurrencyPair, bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
-        let key = Self::stringify_pair(&pair);
+impl MarketHandler for BtcmarketsHandler {
 
-        if !self.orderbook_snapshots.contains_key(&key) {
-            self.orderbook_snapshots.insert(key, (bids.clone(), asks.clone()));
+    fn get_requests(pairs: &[CurrencyPair]) -> Vec<String> {
+        pairs.iter().flat_map(|ref currency_pair| {
+            let pair = Self::stringify_pair(*currency_pair);
+            vec!(
+                api::Request::JoinQueue {
+                    channel_name: format!("Orderbook_{}", pair),
+                    event_name: "OrderBookChange".to_string()
+                },
+                api::Request::JoinQueue {
+                    channel_name: format!("TRADE_{}", pair),
+                    event_name: "MarketTrade".to_string()
+                }
+            )}).map(|req| ::serde_json::to_string(&req).unwrap()).collect()
+    }
+
+    fn stringify_pair(pair: &CurrencyPair) -> String {
+        match *pair {
+            CurrencyPair::BTCXRP => "XRPBTC"
+        }.to_string()
+    }
+}
+
+pub struct BtcmarketsFactory {
+    broadcast_tx: ::ws::Sender,
+    pairs: Vec<CurrencyPair>,
+}
+
+impl ConnectionFactory for BtcmarketsFactory {
+
+    fn new(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) -> Self {
+        Self { broadcast_tx, pairs }
+    }
+
+    fn get_connect_addr() -> ::url::Url {
+        ::url::Url::parse("ws://localhost:10001").unwrap()
+    }
+}
+
+impl ::ws::Factory for BtcmarketsFactory {
+    type Handler = BtcmarketsHandler;
+
+    fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
+        BtcmarketsHandler {
+            orderbook_snapshots: HashMap::new(),
+            broadcast_tx: self.broadcast_tx.clone(),
+            pairs: self.pairs.clone(),
+            out_tx: sender
+        }
+    }
+}
+
+struct Mapper;
+
+impl Mapper {
+
+    fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, ) -> Vec<Broadcast> {
+        match response {
+            api::Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
+                //TODO: convert pair
+                Self::map_orderbook_change(orderbook_snapshots, CurrencyPair::BTCXRP, bids, asks)
+            },
+            api::Response::Trade { currency, instrument, trades, .. } =>
+                vec!(Broadcast::TradeSnapshot {
+                    source: Exchange::BtcMarkets,
+                    // TODO: convert pair
+                    pair: CurrencyPair::BTCXRP,
+                    trades
+                }),
+            _ => vec!()
+        }
+    }
+
+    fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair, bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
+        let key = BtcmarketsHandler::stringify_pair(&pair);
+
+        if !orderbook_snapshots.contains_key(&key) {
+            orderbook_snapshots.insert(key, (bids.clone(), asks.clone()));
 
             return vec!(Broadcast::OrderbookUpdate {
                 source: Exchange::BtcMarkets,
@@ -65,7 +138,7 @@ impl BtcMarketsMarketRunner {
             });
         }
 
-        let last_snapshot = self.orderbook_snapshots.get_mut(&key).unwrap();
+        let last_snapshot = orderbook_snapshots.get_mut(&key).unwrap();
 
         let (removed_bids, new_bids) = Self::diff(&last_snapshot.0, &bids);
         let (removed_asks, new_asks) = Self::diff(&last_snapshot.1, &asks);
@@ -96,116 +169,6 @@ impl BtcMarketsMarketRunner {
 
     fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
         (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
-        second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
+         second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
     }
-}
-
-struct BtcMarketsRunnerWsFactory {
-    broadcast_tx: ::ws::Sender,
-    pairs: Vec<CurrencyPair>,
-}
-
-impl ::ws::Factory for BtcMarketsRunnerWsFactory {
-    type Handler = BtcMarketsMarketRunner;
-
-    fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
-        BtcMarketsMarketRunner {
-            orderbook_snapshots: HashMap::new(),
-            broadcast_tx: self.broadcast_tx.clone(),
-            pairs: self.pairs.clone(),
-            out_tx: sender
-        }
-    }
-}
-
-impl MarketRunner<Request, Response> for BtcMarketsMarketRunner {
-    fn connect(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
-        let factory = BtcMarketsRunnerWsFactory { broadcast_tx, pairs };
-        let mut ws = ::ws::Builder::new().build(factory).unwrap();
-        ws.connect(Self::get_connect_addr()).unwrap();
-        ws.run().unwrap();
-    }
-
-    fn map(&mut self, response: Response) -> Vec<Broadcast> {
-        match response {
-            Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
-                //TODO: convert pair
-                self.map_orderbook_change(CurrencyPair::BTCXRP, bids, asks)
-            },
-            Response::Trade { currency, instrument, trades, .. } =>
-                vec!(Broadcast::TradeSnapshot {
-                        source: Exchange::BtcMarkets,
-                        // TODO: convert pair
-                        pair: CurrencyPair::BTCXRP,
-                        trades
-                    }),
-            _ => vec!()
-        }
-    }
-
-    fn get_connect_addr() -> ::url::Url {
-        ::url::Url::parse("ws://localhost:10001").unwrap()
-    }
-
-    fn get_requests(pairs: &[CurrencyPair]) -> Vec<Request> {
-        pairs.iter().flat_map(|ref currency_pair| {
-            let pair = Self::stringify_pair(*currency_pair);
-            vec!(
-                Request::JoinQueue {
-                    channel_name: format!("Orderbook_{}", pair),
-                    event_name: "OrderBookChange".to_string()
-                },
-                Request::JoinQueue {
-                    channel_name: format!("TRADE_{}", pair),
-                    event_name: "MarketTrade".to_string()
-                }
-            )
-        }).collect()
-    }
-
-    fn stringify_pair(pair: &CurrencyPair) -> String {
-        match *pair {
-            CurrencyPair::BTCXRP => "XRPBTC"
-        }.to_string()
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-pub enum Request {
-    JoinQueue {
-        #[serde(rename = "channelName")]
-        channel_name: String,
-        #[serde(rename = "eventName")]
-        event_name: String
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum Response {
-    OrderbookChange {
-        currency: String,
-        instrument: String,
-        timestamp: i64,
-        #[serde(rename = "marketId")]
-        market_id: i64,
-        #[serde(rename = "snapshotId")]
-        snapshot_id: i64,
-        bids: Vec<OrderbookEntry>,
-        asks: Vec<OrderbookEntry>
-    },
-    Trade {
-        id: i64,
-        timestamp: i64,
-        #[serde(rename = "marketId")]
-        market_id: i64,
-        agency: String,
-        instrument: String,
-        currency: String,
-        trades: Vec<(i64, i64, i64, i64)> //ts, price, volume, total
-    },
-    Status {
-        status: String
-    },
 }

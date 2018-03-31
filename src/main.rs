@@ -9,14 +9,14 @@ extern crate simplelog;
 
 // TODO: Poloniex support
 //mod poloniex;
-//mod btcmarkets;
+mod btcmarkets;
 mod bitfinex;
 mod common;
 
 use std::thread;
 use std::str::FromStr;
 use simplelog::*;
-use common::{MarketHandler, Broadcast, CurrencyPair};
+use common::{Broadcast, CurrencyPair};
 
 const MULTIPLIER: i32 = 100000000;
 
@@ -30,7 +30,6 @@ fn main() {
     ]).expect("Could not initialise combined logger");
 
     let server = ws::WebSocket::new(move |out: ws::Sender| {
-        // TODO: debug info for client
         info!("Client has connected to the server");
 
         let connected = Broadcast::Connected { multiplier: MULTIPLIER };
@@ -53,14 +52,7 @@ fn main() {
     let pairs = vec!(CurrencyPair::BTCXRP);
 
     common::connect::<bitfinex::BitfinexFactory>(tx.clone(), pairs.clone());
-//    tx_in = tx.clone();
-//    pairs_in = pairs.clone();
-//    thread::spawn(move || btcmarkets::BtcMarketsMarketRunner::connect(tx_in, pairs_in));
-
-    // TODO: finish Poloniex support
-//    tx_in = tx.clone();
-//    pairs_in = pairs.clone();
-//    thread::spawn(move|| poloniex::PoloniexMarketRunner{}.(tx_in, pairs_in));
+    common::connect::<btcmarkets::BtcmarketsFactory>(tx.clone(), pairs.clone());
 
     loop {
         thread::sleep(::std::time::Duration::from_secs(1));
