@@ -10,18 +10,18 @@ pub struct BitfinexHandler {
 
 impl ::ws::Handler for BitfinexHandler {
     fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
-        info!("[BITFINEX] Connected");
+        info!("Connected");
 
         Self::get_requests(&self.pairs).into_iter().for_each(|req| {
             self.out_tx.send(req)
-                .unwrap_or_else(|e| error!("[BITFINEX] Failed to send request: {}", e));
+                .unwrap_or_else(|e| error!("Failed to send request: {}", e));
         });
 
         Ok(())
     }
 
     fn on_message(&mut self, msg: ::ws::Message) -> ::ws::Result<()> {
-        debug!("[BITFINEX] Raw message: {}", msg);
+        debug!("Raw message: {}", msg);
 
         match msg.into_text() {
             Ok(txt) => {
@@ -30,12 +30,12 @@ impl ::ws::Handler for BitfinexHandler {
                         Mapper::map(response).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
                             .for_each(|msg| self.broadcast_tx.send(msg)
-                                .unwrap_or_else(|e| error!("[BITFINEX] Could not broadcast: {}", e)))
+                                .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
                     },
-                    Err(e) => error!("[BITFINEX] Could not deserialize message: {}", e)
+                    Err(e) => error!("Could not deserialize message: {}", e)
                 }
             },
-            Err(e) => error!("[BITFINEX] Could not convert Bitfinex message to text: {}", e)
+            Err(e) => error!("Could not convert message to text: {}", e)
         };
 
         Ok(())
@@ -83,7 +83,7 @@ impl ConnectionFactory for BitfinexFactory {
     }
 
     fn get_connect_addr() -> ::url::Url {
-        ::url::Url::parse("wss://api.bitfinex.com/ws/2").unwrap()
+        ::url::Url::parse(dotenv!("BITFINEX_ADDR")).unwrap()
     }
 }
 

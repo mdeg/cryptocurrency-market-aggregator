@@ -6,6 +6,8 @@ extern crate serde_json;
 extern crate env_logger;
 extern crate simplelog;
 #[macro_use] extern crate log;
+#[macro_use] extern crate dotenv_codegen;
+extern crate dotenv;
 
 // TODO: Poloniex support
 //mod poloniex;
@@ -13,6 +15,7 @@ mod btcmarkets;
 mod bitfinex;
 mod common;
 
+use dotenv::dotenv;
 use std::thread;
 use std::str::FromStr;
 use simplelog::*;
@@ -21,7 +24,10 @@ use common::{Broadcast, CurrencyPair};
 const MULTIPLIER: i32 = 100000000;
 
 fn main() {
-    let log_file = std::fs::File::create("./aggregator.log")
+
+    dotenv().ok();
+
+    let log_file = std::fs::File::create(dotenv!("LOG_FILE"))
         .expect("Could not create log file");
 
     CombinedLogger::init(vec![
@@ -44,7 +50,7 @@ fn main() {
 
     let tx = server.broadcaster();
     thread::spawn(move || {
-        let addr = ::std::net::SocketAddr::from_str("127.0.0.1:60400").unwrap();
+        let addr = ::std::net::SocketAddr::from_str(dotenv!("SERVER_ADDR")).unwrap();
         server.listen(addr).unwrap();
     });
 

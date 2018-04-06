@@ -4,7 +4,7 @@ struct PoloniexMarketRunner;
 
 impl MarketRunner<Request, Response> for PoloniexMarketRunner {
     fn get_connect_addr() -> &'static str {
-        "wss://api2.poloniex.com"
+        dotenv!("POLONIEX_ADDR")
     }
 
     fn connect(&self, tx: ::ws::Sender, pairs: Vec<(String, String)>) {

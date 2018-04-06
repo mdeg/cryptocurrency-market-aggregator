@@ -15,18 +15,18 @@ pub struct BtcmarketsHandler {
 
 impl ::ws::Handler for BtcmarketsHandler {
     fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
-        info!("[BTCMarkets] Connected");
+        info!("Connected");
 
         Self::get_requests(&self.pairs).into_iter().for_each(|req| {
             self.out_tx.send(req)
-                .unwrap_or_else(|e| error!("[BTCMarkets] Failed to send request: {}", e));
+                .unwrap_or_else(|e| error!("Failed to send request: {}", e));
         });
 
         Ok(())
     }
 
     fn on_message(&mut self, msg: ::ws::Message) -> ::ws::Result<()> {
-        debug!("[BTCMarkets] Raw message: {}", msg);
+        debug!("Raw message: {}", msg);
 
         match msg.into_text() {
             Ok(txt) => {
@@ -36,13 +36,13 @@ impl ::ws::Handler for BtcmarketsHandler {
                             .map(|r| ::serde_json::to_string(&r).unwrap())
                             .for_each(|msg| {
                                 self.broadcast_tx.send(msg)
-                                    .unwrap_or_else(|e| error!("[BTCMarkets] Could not broadcast: {}", e));
+                                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e));
                             });
                     },
-                    Err(e) => error!("[BTCMarkets] Could not deserialize message: {}", e)
+                    Err(e) => error!("Could not deserialize message: {}", e)
                 }
             },
-            Err(e) => error!("[BTCMarkets] Could not convert message to text: {}", e)
+            Err(e) => error!("Could not convert message to text: {}", e)
         }
 
         Ok(())
@@ -86,7 +86,7 @@ impl ConnectionFactory for BtcmarketsFactory {
     }
 
     fn get_connect_addr() -> ::url::Url {
-        ::url::Url::parse("ws://localhost:10001").unwrap()
+        ::url::Url::parse(dotenv!("BTCMARKETS_ADDR")).unwrap()
     }
 }
 
@@ -107,7 +107,7 @@ struct Mapper;
 
 impl Mapper {
 
-    fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, ) -> Vec<Broadcast> {
+    fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
         match response {
             api::Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
                 //TODO: convert pair

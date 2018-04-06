@@ -11,6 +11,8 @@ serde_json = "*"
 serde_derive = "*"
 simplelog = "*"
 log = "*"
+dotenv = "*"
+dotenv_codegen = "*"
 
 [dependencies.ws]
 version = "*"
