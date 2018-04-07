@@ -32,7 +32,7 @@ impl ::ws::Handler for BtcmarketsHandler {
             Ok(txt) => {
                 match ::serde_json::from_str::<api::Response>(&txt) {
                     Ok(response) => {
-                        Mapper::map(response, &mut self.orderbook_snapshots).into_iter()
+                        map(response, &mut self.orderbook_snapshots).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
                             .for_each(|msg| {
                                 self.broadcast_tx.send(msg)
@@ -103,72 +103,75 @@ impl ::ws::Factory for BtcmarketsFactory {
     }
 }
 
-struct Mapper;
-
-impl Mapper {
-
-    fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
-        match response {
-            api::Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
-                //TODO: convert pair
-                Self::map_orderbook_change(orderbook_snapshots, CurrencyPair::BTCXRP, bids, asks)
-            },
-            api::Response::Trade { currency, instrument, trades, .. } =>
-                vec!(Broadcast::TradeSnapshot {
-                    source: Exchange::BtcMarkets,
-                    // TODO: convert pair
-                    pair: CurrencyPair::BTCXRP,
-                    trades
-                }),
-            _ => vec!()
-        }
-    }
-
-    fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair, bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
-        let key = BtcmarketsHandler::stringify_pair(&pair);
-
-        if !orderbook_snapshots.contains_key(&key) {
-            orderbook_snapshots.insert(key, (bids.clone(), asks.clone()));
-
-            return vec!(Broadcast::OrderbookUpdate {
+fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
+    match response {
+        api::Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
+            let pair = map_pair_code(instrument, currency);
+            map_orderbook_change(orderbook_snapshots, pair, bids, asks)
+        },
+        api::Response::Trade { currency, instrument, trades, .. } => {
+            let pair = map_pair_code(instrument, currency);
+            vec!(Broadcast::TradeSnapshot {
                 source: Exchange::BtcMarkets,
                 pair,
-                bids: bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
-                asks: asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
-            });
-        }
+                trades
+            })},
+        _ => vec!()
+    }
+}
 
-        let last_snapshot = orderbook_snapshots.get_mut(&key).unwrap();
+// Pairs list: https://api.btcmarkets.net/v2/market/active
+fn map_pair_code(instrument: String, currency: String) -> CurrencyPair {
+    match format!("{}{}", instrument, currency).as_str() {
+        "XRPBTC" => CurrencyPair::BTCXRP,
+        _ => panic!("Could not map pair code {}{}", instrument, currency)
+    }
+}
 
-        let (removed_bids, new_bids) = Self::diff(&last_snapshot.0, &bids);
-        let (removed_asks, new_asks) = Self::diff(&last_snapshot.1, &asks);
-        *last_snapshot = (bids, asks);
+fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair, bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
+    let key = BtcmarketsHandler::stringify_pair(&pair);
 
-        let mut responses = vec!();
+    if !orderbook_snapshots.contains_key(&key) {
+        orderbook_snapshots.insert(key, (bids.clone(), asks.clone()));
 
-        if !removed_bids.is_empty() || !removed_asks.is_empty() {
-            responses.push(Broadcast::OrderbookRemove {
-                source: Exchange::BtcMarkets,
-                pair,
-                bids: removed_bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
-                asks: removed_asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
-            });
-        }
-
-        if !new_bids.is_empty() || !new_asks.is_empty() {
-            responses.push(Broadcast::OrderbookUpdate {
-                source: Exchange::BtcMarkets,
-                pair,
-                bids: new_bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
-                asks: new_asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
-            });
-        }
-
-        responses
+        return vec!(Broadcast::OrderbookUpdate {
+            source: Exchange::BtcMarkets,
+            pair,
+            bids: bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
+            asks: asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
+        });
     }
 
-    fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
-        (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
-         second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
+    let last_snapshot = orderbook_snapshots.get_mut(&key).unwrap();
+
+    let (removed_bids, new_bids) = diff(&last_snapshot.0, &bids);
+    let (removed_asks, new_asks) = diff(&last_snapshot.1, &asks);
+    *last_snapshot = (bids, asks);
+
+    let mut responses = vec!();
+
+    if !removed_bids.is_empty() || !removed_asks.is_empty() {
+        responses.push(Broadcast::OrderbookRemove {
+            source: Exchange::BtcMarkets,
+            pair,
+            bids: removed_bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
+            asks: removed_asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
+        });
     }
+
+    if !new_bids.is_empty() || !new_asks.is_empty() {
+        responses.push(Broadcast::OrderbookUpdate {
+            source: Exchange::BtcMarkets,
+            pair,
+            bids: new_bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
+            asks: new_asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
+        });
+    }
+
+    responses
+}
+
+fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
+    (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
+     second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
 }

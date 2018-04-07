@@ -37,7 +37,7 @@ fn main() {
 
     let server = server::Server::run();
 
-    common::connect::<bitfinex::BitfinexFactory>(server.tx(), pairs.clone());
+//    common::connect::<bitfinex::BitfinexFactory>(server.tx(), pairs.clone());
     common::connect::<btcmarkets::BtcmarketsFactory>(server.tx(), pairs.clone());
 
     loop {
