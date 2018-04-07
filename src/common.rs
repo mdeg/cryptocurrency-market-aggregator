@@ -35,12 +35,10 @@ pub enum Broadcast {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Exchange {
-    #[serde(rename = "btcmarkets")]
     BtcMarkets,
-    #[serde(rename = "poloniex")]
     Poloniex,
-    #[serde(rename = "bitfinex")]
     Bitfinex
 }
 
@@ -67,7 +65,7 @@ pub trait MarketHandler {
 
 #[derive(Debug, Serialize, Copy, Clone, PartialEq, Ord, Eq, PartialOrd)]
 pub enum CurrencyPair {
-    BTCXRP
+    XRPBTC
 }
 
 impl CurrencyPair {
@@ -82,7 +80,7 @@ impl CurrencyPair {
 
     pub fn map(value: &str) -> Option<CurrencyPair> {
         match value {
-            "BTCXRP" => Some(CurrencyPair::BTCXRP),
+            "BTCXRP" => Some(CurrencyPair::XRPBTC),
             _ => None
         }
     }

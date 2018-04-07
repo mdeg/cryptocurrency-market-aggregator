@@ -69,7 +69,7 @@ impl MarketHandler for BtcmarketsHandler {
 
     fn stringify_pair(pair: &CurrencyPair) -> String {
         match *pair {
-            CurrencyPair::BTCXRP => "XRPBTC"
+            CurrencyPair::XRPBTC => "XRPBTC"
         }.to_string()
     }
 }
@@ -121,9 +121,10 @@ fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, Orderb
 }
 
 // Pairs list: https://api.btcmarkets.net/v2/market/active
+// TODO: build pairs from API call
 fn map_pair_code(instrument: String, currency: String) -> CurrencyPair {
     match format!("{}{}", instrument, currency).as_str() {
-        "XRPBTC" => CurrencyPair::BTCXRP,
+        "XRPBTC" => CurrencyPair::XRPBTC,
         _ => panic!("Could not map pair code {}{}", instrument, currency)
     }
 }

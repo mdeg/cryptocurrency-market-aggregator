@@ -1,11 +1,13 @@
 mod api;
 
 use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use std::collections::HashMap;
 
 pub struct BitfinexHandler {
     broadcast_tx: ::ws::Sender,
     pairs: Vec<CurrencyPair>,
-    out_tx: ::ws::Sender
+    out_tx: ::ws::Sender,
+    state: State
 }
 
 impl ::ws::Handler for BitfinexHandler {
@@ -27,7 +29,7 @@ impl ::ws::Handler for BitfinexHandler {
             Ok(txt) => {
                 match ::serde_json::from_str::<api::Response>(&txt) {
                     Ok(response) => {
-                        Mapper::map(response).into_iter()
+                        map(response, &mut self.state).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
                             .for_each(|msg| self.broadcast_tx.send(msg)
                                 .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
@@ -67,7 +69,7 @@ impl MarketHandler for BitfinexHandler {
 
     fn stringify_pair(pair: &CurrencyPair) -> String {
         match *pair {
-            CurrencyPair::BTCXRP => "tXRPBTC"
+            CurrencyPair::XRPBTC => "tXRPBTC"
         }.to_string()
     }
 }
@@ -94,84 +96,104 @@ impl ::ws::Factory for BitfinexFactory {
         Self::Handler {
             broadcast_tx: self.broadcast_tx.clone(),
             pairs: self.pairs.clone(),
-            out_tx: sender
+            out_tx: sender,
+            state: State::default()
         }
     }
 }
 
-struct Mapper;
+struct State {
+    channels: HashMap<i32, CurrencyPair>
+}
 
-impl Mapper {
-
-    fn map(response: api::Response) -> Vec<Broadcast> {
-        match response {
-            api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
-                // TODO: map pair from channel_id
-                let pair = CurrencyPair::BTCXRP;
-                Self::map_orderbook_update(pair, price, amount)
-            },
-            api::Response::Trade(channel_id, unknown_string, trades) => {
-                let pair = CurrencyPair::BTCXRP;
-                Self::map_trade(pair, trades)
-            }
-            // TODO: map initial responses
-            _ => vec!()
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            channels: HashMap::new()
         }
     }
+}
 
-    fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
+fn map(response: api::Response, state: &mut State) -> Vec<Broadcast> {
+    match response {
+        api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
+            let pair = state.channels.get(&channel_id).expect("Could not find channel ID");
+            map_orderbook_update(*pair, price, amount)
+        },
+        api::Response::Trade(channel_id, unknown_string, trades) => {
+            let pair = state.channels.get(&channel_id).expect("Could not find channel ID");
+            map_trade(*pair, trades)
+        },
+        api::Response::SubscribeConfirmation { channel_id, symbol, .. } => {
+            let pair = map_pair_code(&symbol);
+            state.channels.insert(channel_id, pair);
+            vec!()
+        }
+        // TODO: map initial responses
+        _ => vec!()
+    }
+}
+
+// Pairs list: https://api.bitfinex.com/v1/symbols
+fn map_pair_code(pair_code: &str) -> CurrencyPair {
+    match pair_code {
+        "tXRPBTC" => CurrencyPair::XRPBTC,
+        _ => panic!("Could not map pair code {}", pair_code)
+    }
+}
+
+fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
+    let conv_price = (price * ::MULTIPLIER as f64) as i64;
+    let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+
+    let (mut bids, mut asks) = (vec!(), vec!());
+    //TODO: trading vs funding?
+    if conv_amount > 0 {
+        bids.push((conv_price, conv_amount));
+    } else {
+        asks.push((conv_price, conv_amount.abs()));
+    }
+
+    if conv_price == 0 {
+        vec!(Broadcast::OrderbookRemove {
+            source: Exchange::Bitfinex,
+            pair,
+            bids,
+            asks
+        })
+    } else {
+        vec!(Broadcast::OrderbookUpdate {
+            source: Exchange::Bitfinex,
+            pair,
+            bids,
+            asks
+        })
+    }
+}
+
+fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
+    let (order_id, ts, amount, price) = trade;
+    let conv_price = (price * ::MULTIPLIER as f64) as i64;
+    let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+
+    vec!(Broadcast::Trade {
+        source: Exchange::Bitfinex,
+        pair,
+        trade: (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
+    })
+}
+
+fn map_initial_trade(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
+    let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
         let conv_price = (price * ::MULTIPLIER as f64) as i64;
         let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
 
-        let (mut bids, mut asks) = (vec!(), vec!());
-        //TODO: trading vs funding?
-        if conv_amount > 0 {
-            bids.push((conv_price, conv_amount));
-        } else {
-            asks.push((conv_price, conv_amount.abs()));
-        }
+        (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
+    }).collect();
 
-        if conv_price == 0 {
-            vec!(Broadcast::OrderbookRemove {
-                source: Exchange::Bitfinex,
-                pair,
-                bids,
-                asks
-            })
-        } else {
-            vec!(Broadcast::OrderbookUpdate {
-                source: Exchange::Bitfinex,
-                pair,
-                bids,
-                asks
-            })
-        }
-    }
-
-    fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
-        let (order_id, ts, amount, price) = trade;
-        let conv_price = (price * ::MULTIPLIER as f64) as i64;
-        let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
-
-        vec!(Broadcast::Trade {
-            source: Exchange::Bitfinex,
-            pair,
-            trade: (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
-        })
-    }
-
-    fn map_initial_trade(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
-        let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
-            let conv_price = (price * ::MULTIPLIER as f64) as i64;
-            let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
-
-            (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
-        }).collect();
-
-        vec!(Broadcast::TradeSnapshot {
-            source: Exchange::Bitfinex,
-            pair,
-            trades: trades_out
-        })
-    }
+    vec!(Broadcast::TradeSnapshot {
+        source: Exchange::Bitfinex,
+        pair,
+        trades: trades_out
+    })
 }
