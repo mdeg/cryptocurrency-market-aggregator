@@ -65,8 +65,25 @@ pub trait MarketHandler {
     fn stringify_pair(pair: &CurrencyPair) -> String;
 }
 
-// TODO: put this in a parsed external file
-#[derive(Debug, Serialize, Copy, Clone)]
+#[derive(Debug, Serialize, Copy, Clone, PartialEq, Ord, Eq, PartialOrd)]
 pub enum CurrencyPair {
     BTCXRP
+}
+
+impl CurrencyPair {
+    pub fn parse(values: &str) -> Vec<CurrencyPair> {
+        let mut pairs: Vec<CurrencyPair> = values.split(',')
+            .map(|x| Self::map(x).expect(&format!("Could not parse currency pair {}", x)))
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    }
+
+    pub fn map(value: &str) -> Option<CurrencyPair> {
+        match value {
+            "BTCXRP" => Some(CurrencyPair::BTCXRP),
+            _ => None
+        }
+    }
 }

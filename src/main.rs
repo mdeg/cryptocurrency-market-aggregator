@@ -18,7 +18,6 @@ mod server;
 
 use dotenv::dotenv;
 use simplelog::*;
-use common::CurrencyPair;
 
 const MULTIPLIER: i32 = 100000000;
 
@@ -34,8 +33,7 @@ fn main() {
         WriteLogger::new(LevelFilter::Debug, Config::default(), log_file),
     ]).expect("Could not initialise combined logger");
 
-    // TODO: take list from args
-    let pairs = vec!(CurrencyPair::BTCXRP);
+    let pairs = common::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
 
     let server = server::Server::run();
 
