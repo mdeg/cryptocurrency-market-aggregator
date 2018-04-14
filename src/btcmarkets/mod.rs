@@ -53,8 +53,8 @@ impl ::ws::Handler for BtcmarketsHandler {
 impl MarketHandler for BtcmarketsHandler {
 
     fn get_requests(pairs: &[CurrencyPair]) -> Vec<String> {
-        pairs.iter().flat_map(|ref currency_pair| {
-            let pair = Self::stringify_pair(*currency_pair);
+        pairs.iter().flat_map(|currency_pair| {
+            let pair = Self::stringify_pair(currency_pair);
             vec!(
                 api::Request::JoinQueue {
                     channel_name: format!("Orderbook_{}", pair),
@@ -106,11 +106,11 @@ impl ::ws::Factory for BtcmarketsFactory {
 fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
     match response {
         api::Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
-            let pair = map_pair_code(instrument, currency);
+            let pair = map_pair_code(&instrument, &currency);
             map_orderbook_change(orderbook_snapshots, pair, bids, asks)
         },
         api::Response::Trade { currency, instrument, trades, .. } => {
-            let pair = map_pair_code(instrument, currency);
+            let pair = map_pair_code(&instrument, &currency);
             vec!(Broadcast::TradeSnapshot {
                 source: Exchange::BtcMarkets,
                 pair,
@@ -122,14 +122,15 @@ fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, Orderb
 
 // Pairs list: https://api.btcmarkets.net/v2/market/active
 // TODO: build pairs from API call
-fn map_pair_code(instrument: String, currency: String) -> CurrencyPair {
+fn map_pair_code(instrument: &str, currency: &str) -> CurrencyPair {
     match format!("{}{}", instrument, currency).as_str() {
         "XRPBTC" => CurrencyPair::XRPBTC,
         _ => panic!("Could not map pair code {}{}", instrument, currency)
     }
 }
 
-fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair, bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
+fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair,
+                        bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
     let key = BtcmarketsHandler::stringify_pair(&pair);
 
     if !orderbook_snapshots.contains_key(&key) {

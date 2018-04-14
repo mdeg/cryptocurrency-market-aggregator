@@ -19,7 +19,7 @@ mod server;
 use dotenv::dotenv;
 use simplelog::*;
 
-const MULTIPLIER: i32 = 100000000;
+const MULTIPLIER: i32 = 100_000_000;
 
 fn main() {
 

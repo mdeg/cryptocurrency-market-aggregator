@@ -47,11 +47,11 @@ impl ::ws::Handler for BitfinexHandler {
 impl MarketHandler for BitfinexHandler {
 
     fn get_requests(pairs: &[CurrencyPair]) -> Vec<String> {
-        pairs.iter().flat_map(|ref pair| { vec!(
+        pairs.iter().flat_map(|pair| { vec!(
             api::Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "book".to_string(),
-                symbol: Self::stringify_pair(*pair),
+                symbol: Self::stringify_pair(pair),
                 precision: api::Precision::R0,
                 frequency: api::Frequency::F0,
                 length: 100.to_string()
@@ -59,7 +59,7 @@ impl MarketHandler for BitfinexHandler {
             api::Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "trades".to_string(),
-                symbol: Self::stringify_pair(*pair),
+                symbol: Self::stringify_pair(pair),
                 precision: api::Precision::R0,
                 frequency: api::Frequency::F0,
                 length: 100.to_string()
@@ -143,8 +143,8 @@ fn map_pair_code(pair_code: &str) -> CurrencyPair {
 }
 
 fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
-    let conv_price = (price * ::MULTIPLIER as f64) as i64;
-    let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+    let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
+    let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
 
     let (mut bids, mut asks) = (vec!(), vec!());
     //TODO: trading vs funding?
@@ -173,8 +173,8 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broa
 
 fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
     let (order_id, ts, amount, price) = trade;
-    let conv_price = (price * ::MULTIPLIER as f64) as i64;
-    let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+    let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
+    let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
 
     vec!(Broadcast::Trade {
         source: Exchange::Bitfinex,
@@ -185,8 +185,8 @@ fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> 
 
 fn map_initial_trade(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
     let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
-        let conv_price = (price * ::MULTIPLIER as f64) as i64;
-        let conv_amount = (amount * ::MULTIPLIER as f64) as i64;
+        let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
+        let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
 
         (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
     }).collect();
