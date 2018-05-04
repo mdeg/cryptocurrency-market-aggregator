@@ -13,6 +13,7 @@ pub struct BtcmarketsHandler {
     out_tx: ::ws::Sender
 }
 
+// TODO: make a macro for this
 impl ::ws::Handler for BtcmarketsHandler {
     fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
         info!("Connected");

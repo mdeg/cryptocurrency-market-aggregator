@@ -117,19 +117,31 @@ impl Default for State {
 fn map(response: api::Response, state: &mut State) -> Vec<Broadcast> {
     match response {
         api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
-            let pair = state.channels.get(&channel_id).expect("Could not find channel ID");
+            let pair = state.channels.get(&channel_id).expect(
+                &format!("Could not find channel ID {}", channel_id));
             map_orderbook_update(*pair, price, amount)
         },
+        // TODO: what is this string?
         api::Response::Trade(channel_id, unknown_string, trades) => {
-            let pair = state.channels.get(&channel_id).expect("Could not find channel ID");
+            let pair = state.channels.get(&channel_id).expect(
+                &format!("Could not find channel ID {}", channel_id));
             map_trade(*pair, trades)
         },
         api::Response::SubscribeConfirmation { channel_id, symbol, .. } => {
             let pair = map_pair_code(&symbol);
             state.channels.insert(channel_id, pair);
             vec!()
+        },
+        api::Response::InitialOrderbook(channel_id, orders) => {
+            let pair = state.channels.get(&channel_id).expect(
+                &format!("Could not find channel ID {}", channel_id));
+            map_initial_orderbook(*pair, orders)
+        },
+        api::Response::InitialTrade(channel_id, trades) => {
+            let pair = state.channels.get(&channel_id).expect(
+                &format!("Could not find channel ID {}", channel_id));
+            map_initial_trades(*pair, trades)
         }
-        // TODO: map initial responses
         _ => vec!()
     }
 }
@@ -147,7 +159,6 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broa
     let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
 
     let (mut bids, mut asks) = (vec!(), vec!());
-    //TODO: trading vs funding?
     if conv_amount > 0 {
         bids.push((conv_price, conv_amount));
     } else {
@@ -157,22 +168,18 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broa
     if conv_price == 0 {
         vec!(Broadcast::OrderbookRemove {
             source: Exchange::Bitfinex,
-            pair,
-            bids,
-            asks
+            pair, bids, asks
         })
     } else {
         vec!(Broadcast::OrderbookUpdate {
             source: Exchange::Bitfinex,
-            pair,
-            bids,
-            asks
+            pair, bids, asks
         })
     }
 }
 
 fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
-    let (order_id, ts, amount, price) = trade;
+    let (_order_id, ts, amount, price) = trade;
     let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
     let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
 
@@ -183,8 +190,8 @@ fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> 
     })
 }
 
-fn map_initial_trade(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
-    let trades_out = trades.into_iter().map(|(order_id, ts, amount, price)| {
+fn map_initial_trades(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
+    let trades_out = trades.into_iter().map(|(_order_id, ts, amount, price)| {
         let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
         let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
 
@@ -195,5 +202,27 @@ fn map_initial_trade(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> V
         source: Exchange::Bitfinex,
         pair,
         trades: trades_out
+    })
+}
+
+fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(i64, f64, f64)>) -> Vec<Broadcast> {
+    let (mut bids, mut asks) = (vec!(), vec!());
+    for order in orders {
+        let (_order_id, price, amount) = order;
+
+        let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
+        let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
+
+        if conv_amount > 0 {
+            bids.push((conv_price, conv_amount));
+        } else {
+            asks.push((conv_price, conv_amount.abs()));
+        }
+    }
+
+    vec!(
+        Broadcast::OrderbookSnapshot {
+        source: Exchange::Bitfinex,
+        pair, bids, asks
     })
 }
