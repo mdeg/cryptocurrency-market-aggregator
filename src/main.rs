@@ -17,6 +17,7 @@ mod server;
 
 use dotenv::dotenv;
 use simplelog::*;
+use std::fs::File;
 
 const MULTIPLIER: i32 = 100_000_000;
 
@@ -24,13 +25,7 @@ fn main() {
 
     dotenv().ok();
 
-    let log_file = std::fs::File::create(dotenv!("LOG_FILE"))
-        .expect("Could not create log file");
-
-    CombinedLogger::init(vec![
-        TermLogger::new(LevelFilter::Debug, Config::default()).expect("Could not initialise terminal logger"),
-        WriteLogger::new(LevelFilter::Debug, Config::default(), log_file),
-    ]).expect("Could not initialise combined logger");
+    init_logger(dotenv!("LOG_FILE_PATH"));
 
     let pairs = common::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
 
@@ -45,3 +40,20 @@ fn main() {
     }
 }
 
+fn init_logger(path: &str) {
+    let mut loggers: Vec<Box<SharedLogger>> = vec!();
+    match File::create(path) {
+        Ok(f) => loggers.push(WriteLogger::new(LevelFilter::Debug, Config::default(), f)),
+        Err(e) => println!("Could not create log file at {}: {}", path, e)
+    }
+    match TermLogger::new(LevelFilter::Debug, Config::default()) {
+        Some(logger) => loggers.push(logger),
+        None => {
+            println!("Could not create terminal logger: falling back to simple logger");
+            loggers.push(SimpleLogger::new(LevelFilter::Debug, Config::default()));
+        }
+    }
+    if let Err(e) = CombinedLogger::init(loggers) {
+        println!("Could not initialise loggers: {}", e);
+    }
+}
