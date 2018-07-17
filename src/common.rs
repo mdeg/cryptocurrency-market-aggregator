@@ -86,7 +86,9 @@ pub enum CurrencyPair {
 }
 
 impl CurrencyPair {
-    pub fn parse(values: &str) -> Vec<CurrencyPair> {
+    // This function parses currency pairs from the list of pairs we care about
+    // This WILL panic if invalid pairs are entered
+    pub fn parse_from_file(values: &str) -> Vec<CurrencyPair> {
         let mut pairs: Vec<CurrencyPair> = values.split(',')
             .map(|x| Self::map(x).expect(&format!("Could not parse currency pair {}", x)))
             .collect();
@@ -95,7 +97,7 @@ impl CurrencyPair {
         pairs
     }
 
-    pub fn map(value: &str) -> Option<CurrencyPair> {
+    fn map(value: &str) -> Option<CurrencyPair> {
         match value {
             "BTCXRP" => Some(CurrencyPair::XRPBTC),
             _ => None

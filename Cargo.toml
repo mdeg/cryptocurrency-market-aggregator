@@ -12,6 +12,9 @@ simplelog = "0.5.2"
 log = "0.4.3"
 dotenv = "0.13.0"
 dotenv_codegen = "0.11.0"
+reqwest = "0.8.6"
+failure = "0.1.1"
+failure_derive = "0.1.1"
 
 [dependencies.ws]
 version = "0.7.6"

@@ -43,3 +43,17 @@ pub enum Response {
         status: String
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct CurrencyPairList {
+    pub success: bool,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub markets: Vec<InstrumentCurrencyPair>
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstrumentCurrencyPair {
+    pub instrument: String,
+    pub currency: String
+}

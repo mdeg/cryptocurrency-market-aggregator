@@ -1,8 +1,10 @@
 mod api;
 
 use self::api::*;
-use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use common::{self, Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
+use std::io::Read;
+use failure::Error;
 
 type OrderbookEntry = (Price, Amount, i64);
 type OrderbookBidsAndAsks = (Vec<OrderbookEntry>, Vec<OrderbookEntry>);
@@ -179,4 +181,28 @@ fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsA
 fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
     (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
      second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
+}
+
+fn retrieve_currency_list() -> Result<Vec<CurrencyPair>, Error> {
+    let mut res = ::reqwest::get(dotenv!("BTCMARKETS_PAIR_LIST_ADDR"))?;
+    let mut body = String::new();
+    res.read_to_string(&mut body)?;
+
+    let pair_list = ::serde_json::from_str::<CurrencyPairList>(&body)?;
+
+    Ok(pair_list.markets
+        .into_iter()
+        .filter_map(|api_pair| { map_to_currency_pair(&api_pair.instrument, &api_pair.currency) })
+        .collect()
+    )
+}
+
+fn map_to_currency_pair(instrument: &str, currency: &str) -> Option<common::CurrencyPair> {
+    match (instrument, currency) {
+        ("BTC", "XRP") => Some(CurrencyPair::XRPBTC),
+        _ => {
+            error!("Did not match pair: instrument {} currency {}", instrument, currency);
+            None
+        }
+    }
 }

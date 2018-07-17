@@ -7,6 +7,9 @@ extern crate simplelog;
 #[macro_use] extern crate log;
 #[macro_use] extern crate dotenv_codegen;
 extern crate dotenv;
+extern crate reqwest;
+extern crate failure;
+extern crate failure_derive;
 
 // TODO: Poloniex support
 //mod poloniex;
@@ -27,7 +30,7 @@ fn main() {
 
     init_logger(dotenv!("LOG_FILE_PATH"));
 
-    let pairs = common::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
+    let pairs = common::CurrencyPair::parse_from_file(dotenv!("CURRENCY_PAIRS"));
 
     let server = server::Server::run();
 
