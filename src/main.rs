@@ -3,7 +3,6 @@ extern crate ws;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
-extern crate env_logger;
 extern crate simplelog;
 #[macro_use] extern crate log;
 #[macro_use] extern crate dotenv_codegen;
