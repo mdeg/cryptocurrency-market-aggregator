@@ -1,7 +1,7 @@
 [package]
 name = "market-aggregator"
 version = "0.1.0"
-authors = ["michael"]
+authors = ["Michael Degano <michael@dega.no>"]
 
 [dependencies]
 url = "1.7.1"
