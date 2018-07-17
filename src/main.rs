@@ -8,8 +8,6 @@ extern crate simplelog;
 #[macro_use] extern crate dotenv_codegen;
 extern crate dotenv;
 
-// TODO: Poloniex support
-//mod poloniex;
 mod btcmarkets;
 mod bitfinex;
 mod common;

@@ -50,7 +50,6 @@ pub enum Broadcast {
 #[serde(rename_all = "lowercase")]
 pub enum Exchange {
     BtcMarkets,
-    Poloniex,
     Bitfinex
 }
 
