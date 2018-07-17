@@ -1,3 +1,8 @@
+pub type Timestamp = i64;
+pub type Price = i64;
+pub type Volume = i64;
+pub type Total = i64;
+
 #[derive(Debug, Serialize)]
 pub enum Broadcast {
     #[serde(rename = "hb")]
@@ -6,34 +11,34 @@ pub enum Broadcast {
     OrderbookUpdate {
         source: Exchange,
         pair: CurrencyPair,
-        bids: Vec<(i64, i64)>,
-        asks: Vec<(i64, i64)>
+        bids: Vec<(Price, Volume)>,
+        asks: Vec<(Price, Volume)>
     },
     #[serde(rename = "orderbookRemove")]
     OrderbookRemove {
         source: Exchange,
         pair: CurrencyPair,
-        bids: Vec<(i64, i64)>,
-        asks: Vec<(i64, i64)>
+        bids: Vec<(Price, Volume)>,
+        asks: Vec<(Price, Volume)>
     },
     #[serde(rename = "orderbookSnapshot")]
     OrderbookSnapshot {
         source: Exchange,
         pair: CurrencyPair,
-        bids: Vec<(i64, i64)>,
-        asks: Vec<(i64, i64)>
+        bids: Vec<(Price, Volume)>,
+        asks: Vec<(Price, Volume)>
     },
     #[serde(rename = "tradeSnapshot")]
     TradeSnapshot {
         source: Exchange,
         pair: CurrencyPair,
-        trades: Vec<(i64, i64, i64, i64)> //ts, price, volume, total
+        trades: Vec<(Timestamp, Price, Volume, Total)> //ts, price, volume, total
     },
     #[serde(rename = "trade")]
     Trade {
         source: Exchange,
         pair: CurrencyPair,
-        trade: (i64, i64, i64, i64) //ts, price, volume, total
+        trade: (Timestamp, Price, Volume, Total) //ts, price, volume, total
     },
     #[serde(rename = "connected")]
     Connected {
