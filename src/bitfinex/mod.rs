@@ -1,7 +1,7 @@
 mod api;
 
 use self::api::*;
-use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use common::{self, Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
 
 pub struct BitfinexHandler {
@@ -155,17 +155,17 @@ fn map_pair_code(pair_code: &str) -> CurrencyPair {
 }
 
 fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
-    let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
-    let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
+    let standardised_price = common::standardise_value(price);
+    let standardised_amount = common::standardise_value(amount);
 
     let (mut bids, mut asks) = (vec!(), vec!());
-    if conv_amount > 0 {
-        bids.push((conv_price, conv_amount));
+    if standardised_amount > 0 {
+        bids.push((standardised_price, standardised_amount));
     } else {
-        asks.push((conv_price, conv_amount.abs()));
+        asks.push((standardised_price, standardised_amount.abs()));
     }
 
-    if conv_price == 0 {
+    if standardised_price == 0 {
         vec!(Broadcast::OrderbookRemove {
             source: Exchange::Bitfinex,
             pair, bids, asks
@@ -180,22 +180,22 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broa
 
 fn map_trade(pair: CurrencyPair, trade: (OrderId, Timestamp, Amount, Price)) -> Vec<Broadcast> {
     let (_order_id, ts, amount, price) = trade;
-    let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
-    let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
+    let standardised_price = common::standardise_value(price);
+    let standardised_amount = common::standardise_value(amount);
 
     vec!(Broadcast::Trade {
         source: Exchange::Bitfinex,
         pair,
-        trade: (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
+        trade: (ts as i64, standardised_price, standardised_amount, standardised_price * standardised_amount)
     })
 }
 
 fn map_initial_trades(pair: CurrencyPair, trades: Vec<(OrderId, Timestamp, Amount, Price)>) -> Vec<Broadcast> {
     let trades_out = trades.into_iter().map(|(_order_id, ts, amount, price)| {
-        let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
-        let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
+        let standardised_price = common::standardise_value(price);
+        let standardised_amount = common::standardise_value(amount);
 
-        (ts as i64, conv_price, conv_amount, conv_price * conv_amount)
+        (ts as i64, standardised_price, standardised_amount, standardised_price * standardised_amount)
     }).collect();
 
     vec!(Broadcast::TradeSnapshot {
@@ -210,13 +210,13 @@ fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(OrderId, Price, Amount
     for order in orders {
         let (_order_id, price, amount) = order;
 
-        let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
-        let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
+        let standardised_price = common::standardise_value(price);
+        let standardised_amount = common::standardise_value(amount);
 
-        if conv_amount > 0 {
-            bids.push((conv_price, conv_amount));
+        if standardised_amount > 0 {
+            bids.push((standardised_price, standardised_amount));
         } else {
-            asks.push((conv_price, conv_amount.abs()));
+            asks.push((standardised_price, standardised_amount.abs()));
         }
     }
 
