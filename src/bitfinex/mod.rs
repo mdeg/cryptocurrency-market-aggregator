@@ -1,5 +1,6 @@
 mod api;
 
+use self::api::*;
 use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
 
@@ -27,7 +28,7 @@ impl ::ws::Handler for BitfinexHandler {
 
         match msg.into_text() {
             Ok(txt) => {
-                match ::serde_json::from_str::<api::Response>(&txt) {
+                match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
                         map(response, &mut self.state).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
@@ -48,20 +49,20 @@ impl MarketHandler for BitfinexHandler {
 
     fn get_requests(pairs: &[CurrencyPair]) -> Vec<String> {
         pairs.iter().flat_map(|pair| { vec!(
-            api::Request::JoinQueue {
+            Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "book".to_string(),
                 symbol: Self::stringify_pair(pair),
-                precision: api::Precision::R0,
-                frequency: api::Frequency::F0,
+                precision: Precision::R0,
+                frequency: Frequency::F0,
                 length: 100.to_string()
             },
-            api::Request::JoinQueue {
+            Request::JoinQueue {
                 event: "subscribe".to_string(),
                 channel: "trades".to_string(),
                 symbol: Self::stringify_pair(pair),
-                precision: api::Precision::R0,
-                frequency: api::Frequency::F0,
+                precision: Precision::R0,
+                frequency: Frequency::F0,
                 length: 100.to_string()
             }
         )}).map(|req| ::serde_json::to_string(&req).unwrap()).collect()
@@ -114,30 +115,29 @@ impl Default for State {
     }
 }
 
-fn map(response: api::Response, state: &mut State) -> Vec<Broadcast> {
+fn map(response: Response, state: &mut State) -> Vec<Broadcast> {
     match response {
-        api::Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
+        Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
             let pair = state.channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_orderbook_update(*pair, price, amount)
         },
-        // TODO: what is this string?
-        api::Response::Trade(channel_id, unknown_string, trades) => {
+        Response::Trade(channel_id, _trade_update_type, trades) => {
             let pair = state.channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_trade(*pair, trades)
         },
-        api::Response::SubscribeConfirmation { channel_id, symbol, .. } => {
+        Response::SubscribeConfirmation { channel_id, symbol, .. } => {
             let pair = map_pair_code(&symbol);
             state.channels.insert(channel_id, pair);
             vec!()
         },
-        api::Response::InitialOrderbook(channel_id, orders) => {
+        Response::InitialOrderbook(channel_id, orders) => {
             let pair = state.channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_initial_orderbook(*pair, orders)
         },
-        api::Response::InitialTrade(channel_id, trades) => {
+        Response::InitialTrade(channel_id, trades) => {
             let pair = state.channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_initial_trades(*pair, trades)
@@ -178,7 +178,7 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broa
     }
 }
 
-fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> {
+fn map_trade(pair: CurrencyPair, trade: (OrderId, Timestamp, Amount, Price)) -> Vec<Broadcast> {
     let (_order_id, ts, amount, price) = trade;
     let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
     let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
@@ -190,7 +190,7 @@ fn map_trade(pair: CurrencyPair, trade: (i64, f64, f64, f64)) -> Vec<Broadcast> 
     })
 }
 
-fn map_initial_trades(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> Vec<Broadcast> {
+fn map_initial_trades(pair: CurrencyPair, trades: Vec<(OrderId, Timestamp, Amount, Price)>) -> Vec<Broadcast> {
     let trades_out = trades.into_iter().map(|(_order_id, ts, amount, price)| {
         let conv_price = (price * f64::from(::MULTIPLIER)) as i64;
         let conv_amount = (amount * f64::from(::MULTIPLIER)) as i64;
@@ -205,7 +205,7 @@ fn map_initial_trades(pair: CurrencyPair, trades: Vec<(i64, f64, f64, f64)>) -> 
     })
 }
 
-fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(i64, f64, f64)>) -> Vec<Broadcast> {
+fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(OrderId, Price, Amount)>) -> Vec<Broadcast> {
     let (mut bids, mut asks) = (vec!(), vec!());
     for order in orders {
         let (_order_id, price, amount) = order;

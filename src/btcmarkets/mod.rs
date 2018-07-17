@@ -1,9 +1,10 @@
 mod api;
 
+use self::api::*;
 use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
 
-pub type OrderbookEntry = (i64, i64, i64); //price, amount, unknown (pair code?)
+type OrderbookEntry = (Price, Amount, i64);
 type OrderbookBidsAndAsks = (Vec<OrderbookEntry>, Vec<OrderbookEntry>);
 
 pub struct BtcmarketsHandler {
@@ -16,7 +17,7 @@ pub struct BtcmarketsHandler {
 // TODO: make a macro for this
 impl ::ws::Handler for BtcmarketsHandler {
     fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
-        info!("Connected");
+        info!("Connected to BTCMarkets");
 
         Self::get_requests(&self.pairs).into_iter().for_each(|req| {
             self.out_tx.send(req)
@@ -31,7 +32,7 @@ impl ::ws::Handler for BtcmarketsHandler {
 
         match msg.into_text() {
             Ok(txt) => {
-                match ::serde_json::from_str::<api::Response>(&txt) {
+                match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
                         map(response, &mut self.orderbook_snapshots).into_iter()
                             .map(|r| ::serde_json::to_string(&r).unwrap())
@@ -57,11 +58,11 @@ impl MarketHandler for BtcmarketsHandler {
         pairs.iter().flat_map(|currency_pair| {
             let pair = Self::stringify_pair(currency_pair);
             vec!(
-                api::Request::JoinQueue {
+                Request::JoinQueue {
                     channel_name: format!("Orderbook_{}", pair),
                     event_name: "OrderBookChange".to_string()
                 },
-                api::Request::JoinQueue {
+                Request::JoinQueue {
                     channel_name: format!("TRADE_{}", pair),
                     event_name: "MarketTrade".to_string()
                 }
@@ -104,13 +105,13 @@ impl ::ws::Factory for BtcmarketsFactory {
     }
 }
 
-fn map(response: api::Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
+fn map(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
     match response {
-        api::Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
+        Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
             let pair = map_pair_code(&instrument, &currency);
             map_orderbook_change(orderbook_snapshots, pair, bids, asks)
         },
-        api::Response::Trade { currency, instrument, trades, .. } => {
+        Response::Trade { currency, instrument, trades, .. } => {
             let pair = map_pair_code(&instrument, &currency);
             vec!(Broadcast::TradeSnapshot {
                 source: Exchange::BtcMarkets,
@@ -137,7 +138,7 @@ fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsA
     if !orderbook_snapshots.contains_key(&key) {
         orderbook_snapshots.insert(key, (bids.clone(), asks.clone()));
 
-        return vec!(Broadcast::OrderbookUpdate {
+        return vec!(Broadcast::OrderbookSnapshot {
             source: Exchange::BtcMarkets,
             pair,
             bids: bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
@@ -174,6 +175,7 @@ fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsA
     responses
 }
 
+// TODO: do this better
 fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
     (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
      second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())

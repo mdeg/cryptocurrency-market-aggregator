@@ -1,3 +1,9 @@
+pub type ChannelId = i32;
+pub type OrderId = i64;
+pub type Timestamp = f64;
+pub type Amount = f64;
+pub type Price = f64;
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum Response {
@@ -11,7 +17,7 @@ pub enum Response {
         event: String,
         channel: String,
         #[serde(rename = "chanId")]
-        channel_id: i32,
+        channel_id: ChannelId,
         pair: String,
         symbol: String,
         #[serde(rename = "prec")]
@@ -35,11 +41,11 @@ pub enum Response {
         #[serde(rename = "len")]
         length: String,
     },
-    Heartbeat(i32, String), //channelid, string="hb"
-    InitialTrade(i32, Vec<(i64, f64, f64, f64)>), //channelId, (orderId, ts, amount, price)
-    InitialOrderbook(i32, Vec<(i64, f64, f64)>), //channelId, (orderid, price, amount)
-    OrderbookUpdate(i32, (i64, f64, f64)), //channelId, (orderid, price, amount)
-    Trade(i32, String, (i64, f64, f64, f64)) //channelId, te/tu (?), (id, ts, amount, price)
+    Heartbeat(ChannelId, String), // The string here is always "hb"
+    InitialTrade(ChannelId, Vec<(OrderId, Timestamp, Amount, Price)>),
+    Trade(ChannelId, TradeUpdateType, (OrderId, Timestamp, Amount, Price)),
+    InitialOrderbook(ChannelId, Vec<(OrderId, Price, Amount)>),
+    OrderbookUpdate(ChannelId, (OrderId, Price, Amount)),
 }
 
 #[derive(Debug, Serialize)]
@@ -71,4 +77,10 @@ pub enum Precision {
 pub enum Frequency {
     F0,
     F1
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum TradeUpdateType {
+    WithTradeId,
+    WithoutTradeId
 }
