@@ -16,8 +16,11 @@ mod server;
 use dotenv::dotenv;
 use simplelog::*;
 use std::fs::File;
+use std::{thread, time};
 
 const MULTIPLIER: i32 = 100_000_000;
+
+// TODO: death handling
 
 fn main() {
 
@@ -33,7 +36,7 @@ fn main() {
     common::connect::<btcmarkets::BtcmarketsFactory>(server.tx(), pairs.clone());
 
     loop {
-        ::std::thread::sleep(::std::time::Duration::from_secs(1));
+        thread::sleep(time::Duration::from_secs(1));
         server.heartbeat();
     }
 }

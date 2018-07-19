@@ -32,13 +32,13 @@ pub enum Broadcast {
     TradeSnapshot {
         source: Exchange,
         pair: CurrencyPair,
-        trades: Vec<(Timestamp, Price, Volume, Total)> //ts, price, volume, total
+        trades: Vec<(Timestamp, Price, Volume, Total)>
     },
     #[serde(rename = "trade")]
     Trade {
         source: Exchange,
         pair: CurrencyPair,
-        trade: (Timestamp, Price, Volume, Total) //ts, price, volume, total
+        trade: (Timestamp, Price, Volume, Total)
     },
     #[serde(rename = "connected")]
     Connected {
@@ -78,7 +78,6 @@ pub fn standardise_value(value: f64) -> i64 {
     (value * f64::from(::MULTIPLIER)).round() as i64
 }
 
-//TODO: implement more pairs
 #[derive(Debug, Serialize, Copy, Clone, PartialEq, Ord, Eq, PartialOrd)]
 pub enum CurrencyPair {
     XRPBTC

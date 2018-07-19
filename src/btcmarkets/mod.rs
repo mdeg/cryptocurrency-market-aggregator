@@ -122,8 +122,7 @@ fn map(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBi
     }
 }
 
-// Pairs list: https://api.btcmarkets.net/v2/market/active
-// TODO: build pairs from API call
+// Supported pairs list: https://api.btcmarkets.net/v2/market/active
 fn map_pair_code(instrument: &str, currency: &str) -> CurrencyPair {
     match format!("{}{}", instrument, currency).as_str() {
         "XRPBTC" => CurrencyPair::XRPBTC,
@@ -131,6 +130,8 @@ fn map_pair_code(instrument: &str, currency: &str) -> CurrencyPair {
     }
 }
 
+// BTCMarkets returns snapshots of the top of the orderbook on every new orderbook event
+// Each snapshot has the last 25 bids and the last 25 asks - so this may include repeats
 fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair,
                         bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
     let key = BtcmarketsHandler::stringify_pair(&pair);
@@ -148,6 +149,7 @@ fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsA
 
     let last_snapshot = orderbook_snapshots.get_mut(&key).unwrap();
 
+    // Need to find which bids/asks have been removed and which have been added
     let (removed_bids, new_bids) = diff(&last_snapshot.0, &bids);
     let (removed_asks, new_asks) = diff(&last_snapshot.1, &asks);
     *last_snapshot = (bids, asks);
