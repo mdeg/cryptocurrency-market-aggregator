@@ -59,6 +59,13 @@ pub enum Broadcast {
     }
 }
 
+#[derive(Debug)]
+pub enum BroadcastType {
+    None,
+    One(Broadcast),
+    Many(Vec<Broadcast>)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Exchange {

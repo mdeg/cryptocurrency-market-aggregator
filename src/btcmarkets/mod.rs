@@ -1,7 +1,7 @@
 mod api;
 
 use self::api::*;
-use common::{self, Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use common::{self, Broadcast, BroadcastType, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
 use ws;
 
@@ -45,12 +45,25 @@ impl ws::Handler for BtcmarketsHandler {
             Ok(txt) => {
                 match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
-                        map(response, &mut self.orderbook_snapshots).into_iter()
-                            .map(|r| ::serde_json::to_string(&r).unwrap())
-                            .for_each(|msg| {
-                                self.broadcast_tx.send(msg)
-                                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e));
-                            });
+                        match handle_response(response, &mut self.orderbook_snapshots) {
+                            BroadcastType::None => {
+                                debug!("Discarding message {} - no broadcast required", txt);
+                            },
+                            BroadcastType::One(broadcast) => {
+                                trace!("Sending one broadcast");
+
+                                self.broadcast_tx.send(::serde_json::to_string(&broadcast).unwrap())
+                                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e))
+                            },
+                            BroadcastType::Many(broadcasts) => {
+                                trace!("Sending {} broadcasts", broadcasts.len());
+
+                                broadcasts.into_iter()
+                                    .map(|broadcast| ::serde_json::to_string(&broadcast).unwrap())
+                                    .for_each(|msg| self.broadcast_tx.send(msg)
+                                        .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
+                            }
+                        }
                     },
                     Err(e) => error!("Could not deserialize message: {}", e)
                 }
@@ -62,7 +75,7 @@ impl ws::Handler for BtcmarketsHandler {
     }
 
     fn on_close(&mut self, _code: ws::CloseCode, reason: &str) {
-        info!("Connection to {} has been lost: {}", Exchange::Bitfinex, reason);
+        info!("Connection to {} has been lost: {}", Exchange::BtcMarkets, reason);
 
         let closed = Broadcast::ExchangeConnectionClosed {
             exchange: Exchange::BtcMarkets,
@@ -75,7 +88,6 @@ impl ws::Handler for BtcmarketsHandler {
         }
     }
 }
-
 
 impl MarketHandler for BtcmarketsHandler {
 
@@ -130,7 +142,7 @@ impl ws::Factory for BtcmarketsFactory {
     }
 }
 
-fn map(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> Vec<Broadcast> {
+fn handle_response(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> BroadcastType {
     match response {
         Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
             let pair = map_pair_code(&instrument, &currency);
@@ -138,38 +150,31 @@ fn map(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBi
         },
         Response::Trade { currency, instrument, trades, .. } => {
             let pair = map_pair_code(&instrument, &currency);
-            vec!(Broadcast::TradeSnapshot {
-                source: Exchange::BtcMarkets,
-                pair,
-                trades
-            })},
-        _ => vec!()
+            let broadcast = Broadcast::TradeSnapshot { source: Exchange::BtcMarkets, pair, trades };
+            BroadcastType::One(broadcast)
+        }
+        _ => BroadcastType::None
     }
 }
 
-// Supported pairs list: https://api.btcmarkets.net/v2/market/active
-fn map_pair_code(instrument: &str, currency: &str) -> CurrencyPair {
-    match format!("{}{}", instrument, currency).as_str() {
-        "XRPBTC" => CurrencyPair::XRPBTC,
-        _ => panic!("Could not map pair code {}{}", instrument, currency)
-    }
-}
 
 // BTCMarkets returns snapshots of the top of the orderbook on every new orderbook event
 // Each snapshot has the last 25 bids and the last 25 asks - so this may include repeats
 fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>, pair: CurrencyPair,
-                        bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> Vec<Broadcast> {
+                        bids: Vec<OrderbookEntry>, asks: Vec<OrderbookEntry>) -> BroadcastType {
     let key = BtcmarketsHandler::stringify_pair(&pair);
 
     if !orderbook_snapshots.contains_key(&key) {
         orderbook_snapshots.insert(key, (bids.clone(), asks.clone()));
 
-        return vec!(Broadcast::OrderbookSnapshot {
+        let broadcast = Broadcast::OrderbookSnapshot {
             source: Exchange::BtcMarkets,
             pair,
             bids: bids.into_iter().map(|(price, amount, _)| (price, amount)).collect(),
             asks: asks.into_iter().map(|(price, amount, _)| (price, amount)).collect()
-        });
+        };
+
+        return BroadcastType::One(broadcast);
     }
 
     let last_snapshot = orderbook_snapshots.get_mut(&key).unwrap();
@@ -199,11 +204,19 @@ fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsA
         });
     }
 
-    responses
+    BroadcastType::Many(responses)
 }
 
 // TODO: do this better
 fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
     (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
      second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
+}
+
+// Supported pairs list: https://api.btcmarkets.net/v2/market/active
+fn map_pair_code(instrument: &str, currency: &str) -> CurrencyPair {
+    match format!("{}{}", instrument, currency).as_str() {
+        "XRPBTC" => CurrencyPair::XRPBTC,
+        _ => panic!("Could not map pair code {}{}", instrument, currency)
+    }
 }

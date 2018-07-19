@@ -26,6 +26,7 @@ pub enum Response {
         market_id: i64,
         #[serde(rename = "snapshotId")]
         snapshot_id: i64,
+        // TODO
         bids: Vec<(Price, Amount, i64)>,  //price, amount, unknown (pair code?)
         asks: Vec<(Price, Amount, i64)>  //price, amount, unknown (pair code?)
     },

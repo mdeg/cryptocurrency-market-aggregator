@@ -1,7 +1,7 @@
 mod api;
 
 use self::api::*;
-use common::{self, Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use common::{self, Broadcast, BroadcastType, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
 use ws;
 
@@ -41,10 +41,25 @@ impl ::ws::Handler for BitfinexHandler {
             Ok(txt) => {
                 match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
-                        map(response, &mut self.state).into_iter()
-                            .map(|r| ::serde_json::to_string(&r).unwrap())
-                            .for_each(|msg| self.broadcast_tx.send(msg)
-                                .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
+                        match handle_response(response, &mut self.state) {
+                            BroadcastType::None => {
+                                debug!("Discarding message {} - no broadcast required", txt);
+                            },
+                            BroadcastType::One(broadcast) => {
+                                trace!("Sending one broadcast");
+
+                                self.broadcast_tx.send(::serde_json::to_string(&broadcast).unwrap())
+                                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e))
+                            },
+                            BroadcastType::Many(broadcasts) => {
+                                trace!("Sending {} broadcasts", broadcasts.len());
+
+                                broadcasts.into_iter()
+                                    .map(|broadcast| ::serde_json::to_string(&broadcast).unwrap())
+                                    .for_each(|msg| self.broadcast_tx.send(msg)
+                                        .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
+                            }
+                        }
                     },
                     Err(e) => error!("Could not deserialize message: {}", e)
                 }
@@ -140,8 +155,9 @@ impl Default for State {
     }
 }
 
-fn map(response: Response, state: &mut State) -> Vec<Broadcast> {
+fn handle_response(response: Response, state: &mut State) -> BroadcastType {
     match response {
+        // TODO: remove pair code duplication
         Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
             let pair = state.channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
@@ -153,9 +169,10 @@ fn map(response: Response, state: &mut State) -> Vec<Broadcast> {
             map_trade(*pair, trades)
         },
         Response::SubscribeConfirmation { channel_id, symbol, .. } => {
-            let pair = map_pair_code(&symbol);
-            state.channels.insert(channel_id, pair);
-            vec!()
+            let pair_code = map_pair_code(&symbol);
+            debug!("{} pair code {:?} maps to channel ID {}", Exchange::Bitfinex, pair_code, channel_id);
+            state.channels.insert(channel_id, pair_code);
+            BroadcastType::None
         },
         Response::InitialOrderbook(channel_id, orders) => {
             let pair = state.channels.get(&channel_id).expect(
@@ -167,7 +184,7 @@ fn map(response: Response, state: &mut State) -> Vec<Broadcast> {
                 &format!("Could not find channel ID {}", channel_id));
             map_initial_trades(*pair, trades)
         }
-        _ => vec!()
+        _ => BroadcastType::None
     }
 }
 
@@ -179,7 +196,7 @@ fn map_pair_code(pair_code: &str) -> CurrencyPair {
     }
 }
 
-fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broadcast> {
+fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> BroadcastType {
     let standardised_price = common::standardise_value(price);
     let standardised_amount = common::standardise_value(amount);
 
@@ -190,32 +207,36 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Vec<Broa
         asks.push((standardised_price, standardised_amount.abs()));
     }
 
-    if standardised_price == 0 {
-        vec!(Broadcast::OrderbookRemove {
+    let broadcast = if standardised_price == 0 {
+        Broadcast::OrderbookRemove {
             source: Exchange::Bitfinex,
             pair, bids, asks
-        })
+        }
     } else {
-        vec!(Broadcast::OrderbookUpdate {
+        Broadcast::OrderbookUpdate {
             source: Exchange::Bitfinex,
             pair, bids, asks
-        })
-    }
+        }
+    };
+
+    BroadcastType::One(broadcast)
 }
 
-fn map_trade(pair: CurrencyPair, trade: (OrderId, Timestamp, Amount, Price)) -> Vec<Broadcast> {
+fn map_trade(pair: CurrencyPair, trade: (OrderId, Timestamp, Amount, Price)) -> BroadcastType {
     let (_order_id, ts, amount, price) = trade;
     let standardised_price = common::standardise_value(price);
     let standardised_amount = common::standardise_value(amount);
 
-    vec!(Broadcast::Trade {
+    let broadcast = Broadcast::Trade {
         source: Exchange::Bitfinex,
         pair,
         trade: (ts as i64, standardised_price, standardised_amount, standardised_price * standardised_amount)
-    })
+    };
+
+    BroadcastType::One(broadcast)
 }
 
-fn map_initial_trades(pair: CurrencyPair, trades: Vec<(OrderId, Timestamp, Amount, Price)>) -> Vec<Broadcast> {
+fn map_initial_trades(pair: CurrencyPair, trades: Vec<(OrderId, Timestamp, Amount, Price)>) -> BroadcastType {
     let trades_out = trades.into_iter().map(|(_order_id, ts, amount, price)| {
         let standardised_price = common::standardise_value(price);
         let standardised_amount = common::standardise_value(amount);
@@ -223,14 +244,16 @@ fn map_initial_trades(pair: CurrencyPair, trades: Vec<(OrderId, Timestamp, Amoun
         (ts as i64, standardised_price, standardised_amount, standardised_price * standardised_amount)
     }).collect();
 
-    vec!(Broadcast::TradeSnapshot {
+    let broadcast = Broadcast::TradeSnapshot {
         source: Exchange::Bitfinex,
         pair,
         trades: trades_out
-    })
+    };
+
+    BroadcastType::One(broadcast)
 }
 
-fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(OrderId, Price, Amount)>) -> Vec<Broadcast> {
+fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(OrderId, Price, Amount)>) -> BroadcastType {
     let (mut bids, mut asks) = (vec!(), vec!());
     for order in orders {
         let (_order_id, price, amount) = order;
@@ -245,9 +268,10 @@ fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(OrderId, Price, Amount
         }
     }
 
-    vec!(
-        Broadcast::OrderbookSnapshot {
+    let broadcast = Broadcast::OrderbookSnapshot {
         source: Exchange::Bitfinex,
         pair, bids, asks
-    })
+    };
+
+    BroadcastType::One(broadcast)
 }
