@@ -1,22 +1,23 @@
 mod api;
 
 use self::api::*;
-use common::{Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use common::{self, Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
+use ws;
 
 type OrderbookEntry = (Price, Amount, i64);
 type OrderbookBidsAndAsks = (Vec<OrderbookEntry>, Vec<OrderbookEntry>);
 
 pub struct BtcmarketsHandler {
     orderbook_snapshots: HashMap<String, OrderbookBidsAndAsks>,
-    broadcast_tx: ::ws::Sender,
+    broadcast_tx: ws::Sender,
     pairs: Vec<CurrencyPair>,
-    out_tx: ::ws::Sender
+    out_tx: ws::Sender
 }
 
 // TODO: make a macro for this
-impl ::ws::Handler for BtcmarketsHandler {
-    fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
+impl ws::Handler for BtcmarketsHandler {
+    fn on_open(&mut self, _: ws::Handshake) -> ws::Result<()> {
         info!("Connected to BTCMarkets");
 
         Self::get_requests(&self.pairs).into_iter().for_each(|req| {
@@ -24,10 +25,20 @@ impl ::ws::Handler for BtcmarketsHandler {
                 .unwrap_or_else(|e| error!("Failed to send request: {}", e));
         });
 
+        let open = Broadcast::ExchangeConnectionOpened {
+            exchange: Exchange::BtcMarkets,
+            // TODO: this should not be i64
+            ts: common::timestamp() as i64
+        };
+
+        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
+            error!("Could not broadcast {} connection open to clients: {}", Exchange::BtcMarkets, e);
+        }
+
         Ok(())
     }
 
-    fn on_message(&mut self, msg: ::ws::Message) -> ::ws::Result<()> {
+    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
         debug!("Raw message: {}", msg);
 
         match msg.into_text() {
@@ -48,6 +59,20 @@ impl ::ws::Handler for BtcmarketsHandler {
         }
 
         Ok(())
+    }
+
+    fn on_close(&mut self, _code: ws::CloseCode, reason: &str) {
+        info!("Connection to {} has been lost: {}", Exchange::Bitfinex, reason);
+
+        let closed = Broadcast::ExchangeConnectionClosed {
+            exchange: Exchange::BtcMarkets,
+            // TODO: this should not be i64
+            ts: common::timestamp() as i64
+        };
+
+        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {
+            error!("Could not broadcast {} connection failure to clients: {}", Exchange::BtcMarkets, e);
+        }
     }
 }
 
@@ -77,13 +102,13 @@ impl MarketHandler for BtcmarketsHandler {
 }
 
 pub struct BtcmarketsFactory {
-    broadcast_tx: ::ws::Sender,
+    broadcast_tx: ws::Sender,
     pairs: Vec<CurrencyPair>,
 }
 
 impl ConnectionFactory for BtcmarketsFactory {
 
-    fn new(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) -> Self {
+    fn new(broadcast_tx: ws::Sender, pairs: Vec<CurrencyPair>) -> Self {
         Self { broadcast_tx, pairs }
     }
 
@@ -92,10 +117,10 @@ impl ConnectionFactory for BtcmarketsFactory {
     }
 }
 
-impl ::ws::Factory for BtcmarketsFactory {
+impl ws::Factory for BtcmarketsFactory {
     type Handler = BtcmarketsHandler;
 
-    fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
+    fn connection_made(&mut self, sender: ws::Sender) -> Self::Handler {
         BtcmarketsHandler {
             orderbook_snapshots: HashMap::new(),
             broadcast_tx: self.broadcast_tx.clone(),

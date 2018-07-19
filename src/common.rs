@@ -1,8 +1,11 @@
+use std::{self, time};
+
 pub type Timestamp = i64;
 pub type Price = i64;
 pub type Volume = i64;
 pub type Total = i64;
 
+// TODO: unify timestamps
 #[derive(Debug, Serialize)]
 pub enum Broadcast {
     #[serde(rename = "hb")]
@@ -43,6 +46,16 @@ pub enum Broadcast {
     #[serde(rename = "connected")]
     Connected {
         multiplier: i32
+    },
+    #[serde(rename = "connectionOpened")]
+    ExchangeConnectionOpened {
+        exchange: Exchange,
+        ts: Timestamp
+    },
+    #[serde(rename = "connectionClosed")]
+    ExchangeConnectionClosed {
+        exchange: Exchange,
+        ts: Timestamp
     }
 }
 
@@ -53,6 +66,15 @@ pub enum Exchange {
     Bitfinex
 }
 
+impl std::fmt::Display for Exchange {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match self {
+            Exchange::BtcMarkets => write!(f, "BTCMarkets"),
+            Exchange::Bitfinex => write!(f, "Bitfinex")
+        }
+    }
+}
+
 pub fn connect<T: ::ws::Factory + ConnectionFactory>(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
     ::std::thread::spawn(move || {
         let factory = T::new(broadcast_tx, pairs);
@@ -60,6 +82,14 @@ pub fn connect<T: ::ws::Factory + ConnectionFactory>(broadcast_tx: ::ws::Sender,
         ws.connect(T::get_connect_addr()).unwrap();
         ws.run().unwrap();
     });
+}
+
+pub fn timestamp() -> u64 {
+    let time = time::SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
+        .expect("Time went backwards");
+
+    time.as_secs() * 1000 + time.subsec_nanos() as u64 / 1_000_000
 }
 
 pub trait ConnectionFactory {

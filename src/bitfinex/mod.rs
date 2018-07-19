@@ -3,27 +3,38 @@ mod api;
 use self::api::*;
 use common::{self, Broadcast, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use std::collections::HashMap;
+use ws;
 
 pub struct BitfinexHandler {
-    broadcast_tx: ::ws::Sender,
+    broadcast_tx: ws::Sender,
     pairs: Vec<CurrencyPair>,
-    out_tx: ::ws::Sender,
+    out_tx: ws::Sender,
     state: State
 }
 
 impl ::ws::Handler for BitfinexHandler {
-    fn on_open(&mut self, _: ::ws::Handshake) -> ::ws::Result<()> {
-        info!("Connected");
+    fn on_open(&mut self, _: ws::Handshake) -> ws::Result<()> {
+        info!("Connected to {}", Exchange::Bitfinex);
 
         Self::get_requests(&self.pairs).into_iter().for_each(|req| {
             self.out_tx.send(req)
                 .unwrap_or_else(|e| error!("Failed to send request: {}", e));
         });
 
+        let open = Broadcast::ExchangeConnectionOpened {
+            exchange: Exchange::Bitfinex,
+            // TODO: this should not be i64
+            ts: common::timestamp() as i64
+        };
+
+        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
+            error!("Could not broadcast {} connection open to clients: {}", Exchange::Bitfinex, e);
+        }
+
         Ok(())
     }
 
-    fn on_message(&mut self, msg: ::ws::Message) -> ::ws::Result<()> {
+    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
         debug!("Raw message: {}", msg);
 
         match msg.into_text() {
@@ -42,6 +53,20 @@ impl ::ws::Handler for BitfinexHandler {
         };
 
         Ok(())
+    }
+
+    fn on_close(&mut self, _code: ws::CloseCode, reason: &str) {
+        info!("Connection to {} has been lost: {}", Exchange::Bitfinex, reason);
+
+        let closed = Broadcast::ExchangeConnectionClosed {
+            exchange: Exchange::Bitfinex,
+            // TODO: this should not be i64
+            ts: common::timestamp() as i64
+        };
+
+        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {
+            error!("Could not broadcast {} connection failure to clients: {}", Exchange::Bitfinex, e);
+        }
     }
 }
 
@@ -76,12 +101,12 @@ impl MarketHandler for BitfinexHandler {
 }
 
 pub struct BitfinexFactory {
-    broadcast_tx: ::ws::Sender,
+    broadcast_tx: ws::Sender,
     pairs: Vec<CurrencyPair>
 }
 
 impl ConnectionFactory for BitfinexFactory {
-    fn new(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) -> Self {
+    fn new(broadcast_tx: ws::Sender, pairs: Vec<CurrencyPair>) -> Self {
         Self { broadcast_tx, pairs }
     }
 
@@ -90,10 +115,10 @@ impl ConnectionFactory for BitfinexFactory {
     }
 }
 
-impl ::ws::Factory for BitfinexFactory {
+impl ws::Factory for BitfinexFactory {
     type Handler = BitfinexHandler;
 
-    fn connection_made(&mut self, sender: ::ws::Sender) -> Self::Handler {
+    fn connection_made(&mut self, sender: ws::Sender) -> Self::Handler {
         Self::Handler {
             broadcast_tx: self.broadcast_tx.clone(),
             pairs: self.pairs.clone(),
