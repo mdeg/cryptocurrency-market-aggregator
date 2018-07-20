@@ -3,7 +3,9 @@ use std::thread;
 use std::str::FromStr;
 
 pub struct Server {
-    tx: ::ws::Sender
+    tx: ::ws::Sender,
+    // Store the heartbeat to prevent reserializing it
+    hb: String
 }
 
 impl Server {
@@ -29,14 +31,13 @@ impl Server {
         });
 
         Self {
-            tx
+            tx,
+            hb: ::serde_json::to_string(&Broadcast::Heartbeat {}).unwrap()
         }
     }
 
     pub fn heartbeat(&self) {
-        // TODO: prevent serializing this on every loop
-        let hb = ::serde_json::to_string(&Broadcast::Heartbeat {}).unwrap();
-        self.tx.send(hb).unwrap_or_else(|e| error!("Could not send heartbeat: {}", e));
+        self.tx.send((&self.hb).as_str()).unwrap_or_else(|e| error!("Could not send heartbeat: {}", e));
     }
 
     pub fn tx(&self) -> ::ws::Sender {

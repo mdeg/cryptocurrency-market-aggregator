@@ -207,7 +207,7 @@ fn map_orderbook_change(orderbook_snapshots: &mut HashMap<String, OrderbookBidsA
     BroadcastType::Many(responses)
 }
 
-// TODO: do this better
+// TODO: do this without clones
 fn diff(first: &Vec<OrderbookEntry>, second: &Vec<OrderbookEntry>) -> (Vec<OrderbookEntry>, Vec<OrderbookEntry>) {
     (first.clone().into_iter().filter(|&x| !second.contains(&x)).collect(),
      second.clone().into_iter().filter(|&x| !first.contains(&x)).collect())
