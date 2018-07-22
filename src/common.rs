@@ -84,10 +84,30 @@ impl std::fmt::Display for Exchange {
 
 pub fn connect<T: ::ws::Factory + ConnectionFactory>(broadcast_tx: ::ws::Sender, pairs: Vec<CurrencyPair>) {
     ::std::thread::spawn(move || {
-        let factory = T::new(broadcast_tx, pairs);
-        let mut ws = ::ws::Builder::new().build(factory).unwrap();
-        ws.connect(T::get_connect_addr()).unwrap();
-        ws.run().unwrap();
+        loop {
+            let factory = T::new(broadcast_tx.clone(), pairs.clone());
+
+            match ::ws::Builder::new().build(factory) {
+                Ok(mut ws) => {
+                    match ws.connect(T::get_connect_addr()) {
+                        Ok(_) => {
+                            match ws.run() {
+                                Ok(_) => info!("WebSocket connection closed gracefully"),
+                                Err(e) => error!("WebSocket connection failed: {}", e)
+                            }
+                        },
+                        Err(e) => error!("Could not queue WebSocket connection: {}", e)
+                    }
+                },
+                Err(e) => error!("Could not construct WebSocket using factory: {}", e)
+            }
+
+            // We've lost connection to our WebSocket endpoint (or could not build it)
+            // Consumers will have been notified of this event through the handler
+            // Delay then attempt a reconnect
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            info!("Attempting to reconnect...");
+        }
     });
 }
 
