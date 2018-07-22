@@ -1,4 +1,5 @@
-use common::Broadcast;
+use super::Broadcast;
+
 use std::thread;
 use std::str::FromStr;
 

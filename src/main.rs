@@ -9,8 +9,8 @@ extern crate simplelog;
 extern crate dotenv;
 
 mod common;
-mod server;
 mod handler;
+mod broadcast_api;
 
 mod btcmarkets;
 mod bitfinex;
@@ -30,7 +30,7 @@ fn main() {
 
     let pairs = common::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
 
-    let server = server::Server::run();
+    let server = broadcast_api::server::Server::run();
 
     common::connect::<bitfinex::BitfinexFactory>(server.tx(), pairs.clone());
     common::connect::<btcmarkets::BtcmarketsFactory>(server.tx(), pairs.clone());

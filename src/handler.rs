@@ -1,5 +1,5 @@
 use ws;
-use common::BroadcastType;
+use broadcast_api::BroadcastType;
 
 pub struct HandlerCore {
     // Sender to broadcast to consumers connected to this program

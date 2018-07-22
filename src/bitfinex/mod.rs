@@ -1,7 +1,8 @@
 mod api;
 
 use self::api::*;
-use common::{self, Broadcast, BroadcastType, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use broadcast_api::{Broadcast, BroadcastType};
+use common::{self, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
 use handler;
 use std::collections::HashMap;
 use ws;
