@@ -2,15 +2,15 @@ mod api;
 
 use self::api::*;
 use broadcast_api::{Broadcast, BroadcastType};
-use common::{self, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
-use handler;
+use super::currencypairs::*;
+use consumer::{self, exchange::Exchange, handler::HandlerCore, MarketHandler, ConnectionFactory};
 use std::collections::HashMap;
 use ws;
 
 type ChannelsMap = HashMap<i32, CurrencyPair>;
 
 pub struct BitfinexHandler {
-    inner: handler::HandlerCore,
+    inner: HandlerCore,
     channels: ChannelsMap,
     pairs: Vec<CurrencyPair>
 }
@@ -25,7 +25,7 @@ impl ::ws::Handler for BitfinexHandler {
 
         let open = Broadcast::ExchangeConnectionOpened {
             exchange: Exchange::Bitfinex,
-            ts: common::timestamp()
+            ts: consumer::timestamp()
         };
 
         self.inner.broadcast(BroadcastType::One(open));
@@ -57,7 +57,7 @@ impl ::ws::Handler for BitfinexHandler {
 
         let closed = Broadcast::ExchangeConnectionClosed {
             exchange: Exchange::Bitfinex,
-            ts: common::timestamp()
+            ts: consumer::timestamp()
         };
 
         self.inner.broadcast(BroadcastType::One(closed));
@@ -114,7 +114,7 @@ impl ws::Factory for BitfinexFactory {
 
     fn connection_made(&mut self, sender: ws::Sender) -> Self::Handler {
         Self::Handler {
-            inner: handler::HandlerCore::new(self.broadcast_tx.clone(), sender),
+            inner: HandlerCore::new(self.broadcast_tx.clone(), sender),
             pairs: self.pairs.clone(),
             channels: HashMap::new()
         }
@@ -163,8 +163,8 @@ fn map_pair_code(pair_code: &str) -> CurrencyPair {
 }
 
 fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> BroadcastType {
-    let standardised_price = common::standardise_value(price);
-    let standardised_amount = common::standardise_value(amount);
+    let standardised_price = consumer::standardise_value(price);
+    let standardised_amount = consumer::standardise_value(amount);
 
     let (mut bids, mut asks) = (vec!(), vec!());
     if standardised_amount > 0 {
@@ -190,8 +190,8 @@ fn map_orderbook_update(pair: CurrencyPair, price: f64, amount: f64) -> Broadcas
 
 fn map_trade(pair: CurrencyPair, trade: (OrderId, Timestamp, Amount, Price)) -> BroadcastType {
     let (_order_id, ts, amount, price) = trade;
-    let standardised_price = common::standardise_value(price);
-    let standardised_amount = common::standardise_value(amount);
+    let standardised_price = consumer::standardise_value(price);
+    let standardised_amount = consumer::standardise_value(amount);
 
     let broadcast = Broadcast::Trade {
         source: Exchange::Bitfinex,
@@ -204,8 +204,8 @@ fn map_trade(pair: CurrencyPair, trade: (OrderId, Timestamp, Amount, Price)) -> 
 
 fn map_initial_trades(pair: CurrencyPair, trades: Vec<(OrderId, Timestamp, Amount, Price)>) -> BroadcastType {
     let trades_out = trades.into_iter().map(|(_order_id, ts, amount, price)| {
-        let standardised_price = common::standardise_value(price);
-        let standardised_amount = common::standardise_value(amount);
+        let standardised_price = consumer::standardise_value(price);
+        let standardised_amount = consumer::standardise_value(amount);
 
         (ts as i64, standardised_price, standardised_amount, standardised_price * standardised_amount)
     }).collect();
@@ -224,8 +224,8 @@ fn map_initial_orderbook(pair: CurrencyPair, orders: Vec<(OrderId, Price, Amount
     for order in orders {
         let (_order_id, price, amount) = order;
 
-        let standardised_price = common::standardise_value(price);
-        let standardised_amount = common::standardise_value(amount);
+        let standardised_price = consumer::standardise_value(price);
+        let standardised_amount = consumer::standardise_value(amount);
 
         if standardised_amount > 0 {
             bids.push((standardised_price, standardised_amount));

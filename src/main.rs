@@ -8,9 +8,9 @@ extern crate simplelog;
 #[macro_use] extern crate dotenv_codegen;
 extern crate dotenv;
 
-mod common;
-mod handler;
+mod currencypairs;
 mod broadcast_api;
+mod consumer;
 
 mod btcmarkets;
 mod bitfinex;
@@ -28,12 +28,12 @@ fn main() {
 
     init_logger(dotenv!("LOG_FILE_PATH"));
 
-    let pairs = common::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
+    let pairs = currencypairs::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
 
     let server = broadcast_api::server::Server::run();
 
-    common::connect::<bitfinex::BitfinexFactory>(server.tx(), pairs.clone());
-    common::connect::<btcmarkets::BtcmarketsFactory>(server.tx(), pairs.clone());
+    consumer::connect::<bitfinex::BitfinexFactory>(server.tx(), pairs.clone());
+    consumer::connect::<btcmarkets::BtcmarketsFactory>(server.tx(), pairs.clone());
 
     loop {
         thread::sleep(time::Duration::from_secs(1));

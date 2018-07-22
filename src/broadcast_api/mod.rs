@@ -1,6 +1,7 @@
 pub mod server;
 
-use common::{Exchange, CurrencyPair};
+use super::currencypairs::*;
+use consumer::exchange::Exchange;
 
 pub type Timestamp = i64;
 pub type Price = i64;

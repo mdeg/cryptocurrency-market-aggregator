@@ -2,7 +2,9 @@ mod api;
 
 use self::api::*;
 use broadcast_api::{Broadcast, BroadcastType};
-use common::{self, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use super::currencypairs::*;
+use consumer::{self, MarketHandler, ConnectionFactory};
+use consumer::exchange::*;
 use std::collections::HashMap;
 use ws;
 
@@ -28,7 +30,7 @@ impl ws::Handler for BtcmarketsHandler {
 
         let open = Broadcast::ExchangeConnectionOpened {
             exchange: Exchange::BtcMarkets,
-            ts: common::timestamp()
+            ts: consumer::timestamp()
         };
 
         if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
@@ -79,7 +81,7 @@ impl ws::Handler for BtcmarketsHandler {
 
         let closed = Broadcast::ExchangeConnectionClosed {
             exchange: Exchange::BtcMarkets,
-            ts: common::timestamp()
+            ts: consumer::timestamp()
         };
 
         if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {
