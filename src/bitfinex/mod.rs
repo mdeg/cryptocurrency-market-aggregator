@@ -2,63 +2,44 @@ mod api;
 
 use self::api::*;
 use common::{self, Broadcast, BroadcastType, Exchange, ConnectionFactory, MarketHandler, CurrencyPair};
+use handler;
 use std::collections::HashMap;
 use ws;
 
+type ChannelsMap = HashMap<i32, CurrencyPair>;
+
 pub struct BitfinexHandler {
-    broadcast_tx: ws::Sender,
-    pairs: Vec<CurrencyPair>,
-    out_tx: ws::Sender,
-    state: State
+    inner: handler::HandlerCore,
+    channels: ChannelsMap,
+    pairs: Vec<CurrencyPair>
 }
 
 impl ::ws::Handler for BitfinexHandler {
     fn on_open(&mut self, _: ws::Handshake) -> ws::Result<()> {
         info!("Connected to {}", Exchange::Bitfinex);
 
-        Self::get_requests(&self.pairs).into_iter().for_each(|req| {
-            self.out_tx.send(req)
-                .unwrap_or_else(|e| error!("Failed to send request: {}", e));
-        });
+        let requests = Self::get_requests(&self.pairs);
+
+        self.inner.send_upstream(requests);
 
         let open = Broadcast::ExchangeConnectionOpened {
             exchange: Exchange::Bitfinex,
             ts: common::timestamp()
         };
 
-        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
-            error!("Could not broadcast {} connection open to clients: {}", Exchange::Bitfinex, e);
-        }
+        self.inner.broadcast(BroadcastType::One(open));
 
+        // TODO: review this
         Ok(())
     }
 
     fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
-        debug!("Raw message: {}", msg);
-
         match msg.into_text() {
             Ok(txt) => {
                 match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
-                        match handle_response(response, &mut self.state) {
-                            BroadcastType::None => {
-                                debug!("Discarding message {} - no broadcast required", txt);
-                            },
-                            BroadcastType::One(broadcast) => {
-                                trace!("Sending one broadcast");
-
-                                self.broadcast_tx.send(::serde_json::to_string(&broadcast).unwrap())
-                                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e))
-                            },
-                            BroadcastType::Many(broadcasts) => {
-                                trace!("Sending {} broadcasts", broadcasts.len());
-
-                                broadcasts.into_iter()
-                                    .map(|broadcast| ::serde_json::to_string(&broadcast).unwrap())
-                                    .for_each(|msg| self.broadcast_tx.send(msg)
-                                        .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
-                            }
-                        }
+                        let message = handle_response(response, &mut self.channels);
+                        self.inner.broadcast(message);
                     },
                     Err(e) => error!("Could not deserialize message: {}", e)
                 }
@@ -66,6 +47,7 @@ impl ::ws::Handler for BitfinexHandler {
             Err(e) => error!("Could not convert message to text: {}", e)
         };
 
+        //TODO: review this
         Ok(())
     }
 
@@ -77,9 +59,7 @@ impl ::ws::Handler for BitfinexHandler {
             ts: common::timestamp()
         };
 
-        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {
-            error!("Could not broadcast {} connection failure to clients: {}", Exchange::Bitfinex, e);
-        }
+        self.inner.broadcast(BroadcastType::One(closed));
     }
 }
 
@@ -133,52 +113,39 @@ impl ws::Factory for BitfinexFactory {
 
     fn connection_made(&mut self, sender: ws::Sender) -> Self::Handler {
         Self::Handler {
-            broadcast_tx: self.broadcast_tx.clone(),
+            inner: handler::HandlerCore::new(self.broadcast_tx.clone(), sender),
             pairs: self.pairs.clone(),
-            out_tx: sender,
-            state: State::default()
-        }
-    }
-}
-
-struct State {
-    channels: HashMap<i32, CurrencyPair>
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
             channels: HashMap::new()
         }
     }
 }
 
-fn handle_response(response: Response, state: &mut State) -> BroadcastType {
+fn handle_response(response: Response, channels: &mut ChannelsMap) -> BroadcastType {
     match response {
         // TODO: remove pair code duplication
         Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
-            let pair = state.channels.get(&channel_id).expect(
+            let pair = channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_orderbook_update(*pair, price, amount)
         },
         Response::Trade(channel_id, _trade_update_type, trades) => {
-            let pair = state.channels.get(&channel_id).expect(
+            let pair = channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_trade(*pair, trades)
         },
         Response::SubscribeConfirmation { channel_id, symbol, .. } => {
             let pair_code = map_pair_code(&symbol);
             debug!("{} pair code {:?} maps to channel ID {}", Exchange::Bitfinex, pair_code, channel_id);
-            state.channels.insert(channel_id, pair_code);
+            channels.insert(channel_id, pair_code);
             BroadcastType::None
         },
         Response::InitialOrderbook(channel_id, orders) => {
-            let pair = state.channels.get(&channel_id).expect(
+            let pair = channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_initial_orderbook(*pair, orders)
         },
         Response::InitialTrade(channel_id, trades) => {
-            let pair = state.channels.get(&channel_id).expect(
+            let pair = channels.get(&channel_id).expect(
                 &format!("Could not find channel ID {}", channel_id));
             map_initial_trades(*pair, trades)
         }

@@ -8,10 +8,12 @@ extern crate simplelog;
 #[macro_use] extern crate dotenv_codegen;
 extern crate dotenv;
 
-mod btcmarkets;
-mod bitfinex;
 mod common;
 mod server;
+mod handler;
+
+mod btcmarkets;
+mod bitfinex;
 
 use dotenv::dotenv;
 use simplelog::*;
