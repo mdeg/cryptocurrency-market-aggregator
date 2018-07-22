@@ -3,6 +3,7 @@ pub type Price = i64;
 pub type Volume = i64;
 pub type Total = i64;
 pub type Amount = i64;
+pub type PairCode = i64;
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
@@ -18,7 +19,7 @@ pub enum Request {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum Response {
-    OrderbookChange {
+    OrderbookSnapshot {
         currency: String,
         instrument: String,
         timestamp: Timestamp,
@@ -26,9 +27,8 @@ pub enum Response {
         market_id: i64,
         #[serde(rename = "snapshotId")]
         snapshot_id: i64,
-        // TODO
-        bids: Vec<(Price, Amount, i64)>,  //price, amount, unknown (pair code?)
-        asks: Vec<(Price, Amount, i64)>  //price, amount, unknown (pair code?)
+        bids: Vec<(Price, Amount, PairCode)>,
+        asks: Vec<(Price, Amount, PairCode)>
     },
     Trade {
         id: i64,
