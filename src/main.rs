@@ -20,8 +20,6 @@ use std::{thread, time};
 
 const MULTIPLIER: i32 = 100_000_000;
 
-// TODO: death handling
-
 fn main() {
 
     dotenv().ok();

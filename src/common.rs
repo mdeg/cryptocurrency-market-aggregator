@@ -5,7 +5,6 @@ pub type Price = i64;
 pub type Volume = i64;
 pub type Total = i64;
 
-// TODO: unify timestamps
 #[derive(Debug, Serialize)]
 pub enum Broadcast {
     #[serde(rename = "hb")]
@@ -111,12 +110,12 @@ pub fn connect<T: ::ws::Factory + ConnectionFactory>(broadcast_tx: ::ws::Sender,
     });
 }
 
-pub fn timestamp() -> u64 {
+pub fn timestamp() -> i64 {
     let time = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
         .expect("Time went backwards");
 
-    time.as_secs() * 1000 + time.subsec_nanos() as u64 / 1_000_000
+    (time.as_secs() * 1000) as i64
 }
 
 pub trait ConnectionFactory {

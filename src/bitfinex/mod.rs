@@ -23,8 +23,7 @@ impl ::ws::Handler for BitfinexHandler {
 
         let open = Broadcast::ExchangeConnectionOpened {
             exchange: Exchange::Bitfinex,
-            // TODO: this should not be i64
-            ts: common::timestamp() as i64
+            ts: common::timestamp()
         };
 
         if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
@@ -75,8 +74,7 @@ impl ::ws::Handler for BitfinexHandler {
 
         let closed = Broadcast::ExchangeConnectionClosed {
             exchange: Exchange::Bitfinex,
-            // TODO: this should not be i64
-            ts: common::timestamp() as i64
+            ts: common::timestamp()
         };
 
         if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {

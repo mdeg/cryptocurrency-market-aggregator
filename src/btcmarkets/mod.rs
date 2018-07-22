@@ -27,8 +27,7 @@ impl ws::Handler for BtcmarketsHandler {
 
         let open = Broadcast::ExchangeConnectionOpened {
             exchange: Exchange::BtcMarkets,
-            // TODO: this should not be i64
-            ts: common::timestamp() as i64
+            ts: common::timestamp()
         };
 
         if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
@@ -79,8 +78,7 @@ impl ws::Handler for BtcmarketsHandler {
 
         let closed = Broadcast::ExchangeConnectionClosed {
             exchange: Exchange::BtcMarkets,
-            // TODO: this should not be i64
-            ts: common::timestamp() as i64
+            ts: common::timestamp()
         };
 
         if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {
@@ -144,7 +142,7 @@ impl ws::Factory for BtcmarketsFactory {
 
 fn handle_response(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> BroadcastType {
     match response {
-        Response::OrderbookChange { currency, instrument, bids, asks, .. } => {
+        Response::OrderbookSnapshot { currency, instrument, bids, asks, .. } => {
             let pair = map_pair_code(&instrument, &currency);
             map_orderbook_change(orderbook_snapshots, pair, bids, asks)
         },
