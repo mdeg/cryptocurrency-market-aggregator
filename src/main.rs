@@ -8,7 +8,7 @@ extern crate simplelog;
 #[macro_use] extern crate dotenv_codegen;
 extern crate dotenv;
 
-mod currencypairs;
+mod domain;
 mod broadcast_api;
 mod consumer;
 
@@ -28,7 +28,7 @@ fn main() {
 
     init_logger(dotenv!("LOG_FILE_PATH"));
 
-    let pairs = currencypairs::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
+    let pairs = domain::CurrencyPair::parse(dotenv!("CURRENCY_PAIRS"));
 
     let server = broadcast_api::server::Server::run();
 

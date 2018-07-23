@@ -2,8 +2,8 @@ mod api;
 
 use self::api::*;
 use broadcast_api::{Broadcast, BroadcastType};
-use super::currencypairs::*;
-use consumer::{self, exchange::Exchange, handler::HandlerCore, MarketHandler, ConnectionFactory};
+use super::domain::*;
+use consumer::{self, handler::HandlerCore, MarketHandler, ConnectionFactory};
 use std::collections::HashMap;
 use ws;
 

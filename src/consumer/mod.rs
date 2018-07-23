@@ -1,7 +1,7 @@
 pub mod handler;
 pub mod exchange;
 
-use super::currencypairs::*;
+use super::domain::*;
 use ws;
 use std::{time, thread};
 
