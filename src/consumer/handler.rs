@@ -1,5 +1,6 @@
 use ws;
 use broadcast_api::BroadcastType;
+use super::error::*;
 
 pub struct HandlerCore {
     // Sender to broadcast to consumers connected to this program
@@ -8,39 +9,72 @@ pub struct HandlerCore {
     exchange_tx: ws::Sender
 }
 
-// TODO: work out how to handle errors thrown in the core here
 impl HandlerCore {
 
     pub fn new(broadcast_tx: ws::Sender, exchange_tx: ws::Sender) -> Self {
         Self { broadcast_tx, exchange_tx }
     }
 
-    pub fn send_upstream(&mut self, requests: Vec<String>) {
-        requests.into_iter().for_each(|req| {
-            self.exchange_tx.send(req)
-                .unwrap_or_else(|e| error!("Failed to send request: {}", e));
-        });
+    // Send messages upstream to the API we are consuming from
+    pub fn send_upstream(&mut self, msgs: &[String]) -> Result<()> {
+        let failures: Vec<Error> = msgs.into_iter().map(|msg| {
+                self.exchange_tx.send(msg.clone())
+                    .chain_err(|| ErrorKind::BroadcastError)
+            })
+            .filter(|result| result.is_err())
+            .map(|fail| fail.unwrap_err())
+            .collect();
+
+        if failures.len() == 0 {
+            Ok(())
+        } else {
+            bail!(ErrorKind::MultipleBroadcastError(failures))
+        }
     }
 
-    pub fn broadcast(&mut self, broadcast: BroadcastType) -> ws::Result<()> {
+    // Broadcast messages downstream to the consumers listening to our broadcast
+    pub fn broadcast(&mut self, broadcast: BroadcastType) -> Result<()> {
         match broadcast {
-            BroadcastType::None => trace!("Discarding message - no broadcast required"),
+            BroadcastType::None => {
+                trace!("Discarding message - no broadcast required");
+
+                Ok(())
+            },
             BroadcastType::One(broadcast) => {
                 trace!("Sending one broadcast");
 
-                self.broadcast_tx.send(::serde_json::to_string(&broadcast).unwrap())
-                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e))
+                let serialized = ::serde_json::to_string(&broadcast)?;
+                self.broadcast_tx.send(serialized)?;
+
+                Ok(())
             },
             BroadcastType::Many(broadcasts) => {
                 trace!("Sending {} broadcasts", broadcasts.len());
 
-                broadcasts.into_iter()
-                    .map(|broadcast| ::serde_json::to_string(&broadcast).unwrap())
-                    .for_each(|msg| self.broadcast_tx.send(msg)
-                        .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
+                let serialization: Vec<Result<String>> = broadcasts.into_iter()
+                    .map(|broadcast| ::serde_json::to_string(&broadcast)
+                        .chain_err(|| ErrorKind::BroadcastError))
+                    .collect();
+
+                let mut failures = vec!();
+
+                for serialization_result in serialization {
+                    match serialization_result {
+                        Ok(msg) => {
+                            if let Err(e) = self.broadcast_tx.send(msg).chain_err(|| ErrorKind::BroadcastError) {
+                                failures.push(e);
+                            }
+                        },
+                        Err(e) => failures.push(e)
+                    }
+                }
+
+                if failures.len() == 0 {
+                    Ok(())
+                } else {
+                    bail!(ErrorKind::MultipleBroadcastError(failures))
+                }
             }
         }
-
-        Ok(())
     }
 }

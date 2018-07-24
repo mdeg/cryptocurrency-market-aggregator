@@ -4,8 +4,8 @@ use self::api::*;
 use broadcast_api::{Broadcast, BroadcastType};
 use super::domain::*;
 use consumer::{self, handler::HandlerCore, MarketHandler, ConnectionFactory};
-use std::collections::HashMap;
 use ws;
+use std::{collections::HashMap, thread, time::Duration};
 
 type ChannelsMap = HashMap<i32, CurrencyPair>;
 
@@ -21,14 +21,27 @@ impl ::ws::Handler for BitfinexHandler {
 
         let requests = Self::get_requests(&self.pairs);
 
-        self.inner.send_upstream(requests);
+        while let Err(e) = self.inner.send_upstream(&requests) {
+            // This is a worry - might indicate a busted exchange
+            // All queue messages need to reach the endpoint to guarantee downstream data validity
+
+            error!("Could not send all channel join requests to Bitfinex: {}", e);
+
+            // TODO: check what happens on multiple subscriptions
+
+            info!("Retrying connection to Bitfinex in 10 seconds...");
+            thread::sleep(Duration::from_secs(10));
+        }
 
         let open = Broadcast::ExchangeConnectionOpened {
             exchange: Exchange::Bitfinex,
             ts: consumer::timestamp()
         };
 
-        self.inner.broadcast(BroadcastType::One(open));
+        if let Err(e) = self.inner.broadcast(BroadcastType::One(open)) {
+            // May occur on launch when exchange connection is fine but server has not started up yet
+            warn!("Could not broadcast Bitfinex open message: {}", e);
+        }
 
         // TODO: review this
         Ok(())
@@ -39,8 +52,11 @@ impl ::ws::Handler for BitfinexHandler {
             Ok(txt) => {
                 match ::serde_json::from_str::<Response>(&txt) {
                     Ok(response) => {
-                        let message = handle_response(response, &mut self.channels);
-                        self.inner.broadcast(message);
+                        let broadcast = handle_response(response, &mut self.channels);
+
+                        if let Err(e) = self.inner.broadcast(broadcast) {
+                            error!("Could not broadcast message: {}", e);
+                        }
                     },
                     Err(e) => error!("Could not deserialize message: {}", e)
                 }
@@ -60,7 +76,12 @@ impl ::ws::Handler for BitfinexHandler {
             ts: consumer::timestamp()
         };
 
-        self.inner.broadcast(BroadcastType::One(closed));
+        if let Err(e) = self.inner.broadcast(BroadcastType::One(closed)) {
+            // This might occur if the broadcast connection disappears completely
+            // For example, loss of network connectivity
+            // Clients should rely on the missing heartbeat to determine that data is invalid
+            warn!("Could not broadcast exchange closed message: {}", e);
+        }
     }
 }
 

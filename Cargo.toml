@@ -12,6 +12,7 @@ simplelog = "0.5.2"
 log = "0.4.3"
 dotenv = "0.13.0"
 dotenv_codegen = "0.11.0"
+error-chain = "0.12.0"
 
 [dependencies.ws]
 version = "0.7.6"

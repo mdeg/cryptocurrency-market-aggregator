@@ -7,6 +7,7 @@ extern crate simplelog;
 #[macro_use] extern crate log;
 #[macro_use] extern crate dotenv_codegen;
 extern crate dotenv;
+#[macro_use] extern crate error_chain;
 
 mod domain;
 mod broadcast_api;

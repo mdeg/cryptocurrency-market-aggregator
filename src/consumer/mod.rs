@@ -1,6 +1,8 @@
 pub mod handler;
 pub mod exchange;
 
+mod error;
+
 use super::domain::*;
 use ws;
 use std::{time, thread};
