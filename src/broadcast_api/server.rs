@@ -13,7 +13,14 @@ pub struct Server {
 
 impl Server {
     pub fn run() -> Self {
-        let server = ws::WebSocket::new(move |out: ws::Sender| {
+
+        let server = ws::Builder::new().with_settings({
+            let mut settings = ws::Settings::default();
+            settings.tcp_nodelay = true;
+            settings.panic_on_internal = false;
+            settings.panic_on_new_connection = true;
+            settings
+        }).build(move |out: ws::Sender| {
             info!("Client has connected to the server");
 
             // Broadcast a connected message to clients when they hook into the broadcast API

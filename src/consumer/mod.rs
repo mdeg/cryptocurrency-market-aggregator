@@ -11,7 +11,14 @@ pub fn connect<T: ws::Factory + ConnectionFactory>(broadcast_tx: ws::Sender, pai
         loop {
             let factory = T::new(broadcast_tx.clone(), pairs.clone());
 
-            match ws::Builder::new().build(factory) {
+            let settings = {
+                let mut settings = ws::Settings::default();
+                settings.tcp_nodelay = true;
+                settings.panic_on_internal = false;
+                settings
+            };
+
+            match ws::Builder::new().with_settings(settings).build(factory) {
                 Ok(mut ws) => {
                     match ws.connect(T::get_connect_addr()) {
                         Ok(_) => {
