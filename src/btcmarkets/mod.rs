@@ -3,7 +3,7 @@ mod api;
 use self::api::*;
 use broadcast_api::{Broadcast, BroadcastType};
 use super::domain::*;
-use consumer::{self, MarketHandler, ConnectionFactory};
+use consumer::{self, handler::HandlerCore, MarketHandler, ConnectionFactory};
 use std::collections::HashMap;
 use ws;
 
@@ -11,82 +11,18 @@ type OrderbookEntry = (Price, Amount, i64);
 type OrderbookBidsAndAsks = (Vec<OrderbookEntry>, Vec<OrderbookEntry>);
 
 pub struct BtcmarketsHandler {
+    inner: HandlerCore,
     orderbook_snapshots: HashMap<String, OrderbookBidsAndAsks>,
-    broadcast_tx: ws::Sender,
     pairs: Vec<CurrencyPair>,
-    out_tx: ws::Sender
 }
 
-// TODO: make a macro for this
 impl ws::Handler for BtcmarketsHandler {
-    fn on_open(&mut self, _: ws::Handshake) -> ws::Result<()> {
-        info!("Connected to BTCMarkets");
 
-        Self::get_requests(&self.pairs).into_iter().for_each(|req| {
-            self.out_tx.send(req)
-                .unwrap_or_else(|e| error!("Failed to send request: {}", e));
-        });
+    generic_open!(Exchange::BtcMarkets);
 
-        let open = Broadcast::ExchangeConnectionOpened {
-            exchange: Exchange::BtcMarkets,
-            ts: consumer::timestamp()
-        };
+    generic_on_message!(Response);
 
-        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&open).unwrap()) {
-            error!("Could not broadcast {} connection open to clients: {}", Exchange::BtcMarkets, e);
-        }
-
-        Ok(())
-    }
-
-    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
-        debug!("Raw message: {}", msg);
-
-        match msg.into_text() {
-            Ok(txt) => {
-                match ::serde_json::from_str::<Response>(&txt) {
-                    Ok(response) => {
-                        match handle_response(response, &mut self.orderbook_snapshots) {
-                            BroadcastType::None => {
-                                debug!("Discarding message {} - no broadcast required", txt);
-                            },
-                            BroadcastType::One(broadcast) => {
-                                trace!("Sending one broadcast");
-
-                                self.broadcast_tx.send(::serde_json::to_string(&broadcast).unwrap())
-                                    .unwrap_or_else(|e| error!("Could not broadcast: {}", e))
-                            },
-                            BroadcastType::Many(broadcasts) => {
-                                trace!("Sending {} broadcasts", broadcasts.len());
-
-                                broadcasts.into_iter()
-                                    .map(|broadcast| ::serde_json::to_string(&broadcast).unwrap())
-                                    .for_each(|msg| self.broadcast_tx.send(msg)
-                                        .unwrap_or_else(|e| error!("Could not broadcast: {}", e)))
-                            }
-                        }
-                    },
-                    Err(e) => error!("Could not deserialize message: {}", e)
-                }
-            },
-            Err(e) => error!("Could not convert message to text: {}", e)
-        }
-
-        Ok(())
-    }
-
-    fn on_close(&mut self, _code: ws::CloseCode, reason: &str) {
-        info!("Connection to {} has been lost: {}", Exchange::BtcMarkets, reason);
-
-        let closed = Broadcast::ExchangeConnectionClosed {
-            exchange: Exchange::BtcMarkets,
-            ts: consumer::timestamp()
-        };
-
-        if let Err(e) = self.broadcast_tx.send(::serde_json::to_string(&closed).unwrap()) {
-            error!("Could not broadcast {} connection failure to clients: {}", Exchange::BtcMarkets, e);
-        }
-    }
+    generic_on_close!(Exchange::BtcMarkets);
 }
 
 impl MarketHandler for BtcmarketsHandler {
@@ -134,29 +70,29 @@ impl ws::Factory for BtcmarketsFactory {
 
     fn connection_made(&mut self, sender: ws::Sender) -> Self::Handler {
         BtcmarketsHandler {
+            inner: HandlerCore::new(self.broadcast_tx.clone(), sender),
             orderbook_snapshots: HashMap::new(),
-            broadcast_tx: self.broadcast_tx.clone(),
             pairs: self.pairs.clone(),
-            out_tx: sender
         }
     }
 }
 
-fn handle_response(response: Response, orderbook_snapshots: &mut HashMap<String, OrderbookBidsAndAsks>) -> BroadcastType {
-    match response {
-        Response::OrderbookSnapshot { currency, instrument, bids, asks, .. } => {
-            let pair = map_pair_code(&instrument, &currency);
-            map_orderbook_change(orderbook_snapshots, pair, bids, asks)
-        },
-        Response::Trade { currency, instrument, trades, .. } => {
-            let pair = map_pair_code(&instrument, &currency);
-            let broadcast = Broadcast::TradeSnapshot { source: Exchange::BtcMarkets, pair, trades };
-            BroadcastType::One(broadcast)
+impl BtcmarketsHandler {
+    fn handle_response(&mut self, response: Response) -> BroadcastType {
+        match response {
+            Response::OrderbookSnapshot { currency, instrument, bids, asks, .. } => {
+                let pair = map_pair_code(&instrument, &currency);
+                map_orderbook_change(&mut self.orderbook_snapshots, pair, bids, asks)
+            },
+            Response::Trade { currency, instrument, trades, .. } => {
+                let pair = map_pair_code(&instrument, &currency);
+                let broadcast = Broadcast::TradeSnapshot { source: Exchange::BtcMarkets, pair, trades };
+                BroadcastType::One(broadcast)
+            }
+            _ => BroadcastType::None
         }
-        _ => BroadcastType::None
     }
 }
-
 
 // BTCMarkets returns snapshots of the top of the orderbook on every new orderbook event
 // Each snapshot has the last 25 bids and the last 25 asks - so this may include repeats

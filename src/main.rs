@@ -11,6 +11,7 @@ extern crate dotenv;
 
 mod domain;
 mod broadcast_api;
+#[macro_use]
 mod consumer;
 
 mod btcmarkets;

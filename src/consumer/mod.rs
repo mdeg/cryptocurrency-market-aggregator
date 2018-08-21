@@ -1,4 +1,6 @@
 pub mod handler;
+#[macro_use]
+pub mod macros;
 
 mod error;
 

@@ -5,7 +5,7 @@ use broadcast_api::{Broadcast, BroadcastType};
 use super::domain::*;
 use consumer::{self, handler::HandlerCore, MarketHandler, ConnectionFactory};
 use ws;
-use std::{collections::HashMap, thread, time::Duration};
+use std::{collections::HashMap};
 
 type ChannelsMap = HashMap<i32, CurrencyPair>;
 
@@ -16,73 +16,12 @@ pub struct BitfinexHandler {
 }
 
 impl ::ws::Handler for BitfinexHandler {
-    fn on_open(&mut self, _: ws::Handshake) -> ws::Result<()> {
-        info!("Connected to {}", Exchange::Bitfinex);
 
-        let requests = Self::get_requests(&self.pairs);
+    generic_open!(Exchange::Bitfinex);
 
-        while let Err(e) = self.inner.send_upstream(&requests) {
-            // This is a worry - might indicate a busted exchange
-            // All queue messages need to reach the endpoint to guarantee downstream data validity
+    generic_on_message!(Response);
 
-            error!("Could not send all channel join requests to Bitfinex: {}", e);
-
-            // TODO: check what happens on multiple subscriptions
-
-            info!("Retrying connection to Bitfinex in 10 seconds...");
-            thread::sleep(Duration::from_secs(10));
-        }
-
-        let open = Broadcast::ExchangeConnectionOpened {
-            exchange: Exchange::Bitfinex,
-            ts: consumer::timestamp()
-        };
-
-        if let Err(e) = self.inner.broadcast(BroadcastType::One(open)) {
-            // May occur on launch when exchange connection is fine but server has not started up yet
-            warn!("Could not broadcast Bitfinex open message: {}", e);
-        }
-
-        // TODO: review this
-        Ok(())
-    }
-
-    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
-        match msg.into_text() {
-            Ok(txt) => {
-                match ::serde_json::from_str::<Response>(&txt) {
-                    Ok(response) => {
-                        let broadcast = handle_response(response, &mut self.channels);
-
-                        if let Err(e) = self.inner.broadcast(broadcast) {
-                            error!("Could not broadcast message: {}", e);
-                        }
-                    },
-                    Err(e) => error!("Could not deserialize message: {}", e)
-                }
-            },
-            Err(e) => error!("Could not convert message to text: {}", e)
-        };
-
-        //TODO: review this
-        Ok(())
-    }
-
-    fn on_close(&mut self, _code: ws::CloseCode, reason: &str) {
-        info!("Connection to {} has been lost: {}", Exchange::Bitfinex, reason);
-
-        let closed = Broadcast::ExchangeConnectionClosed {
-            exchange: Exchange::Bitfinex,
-            ts: consumer::timestamp()
-        };
-
-        if let Err(e) = self.inner.broadcast(BroadcastType::One(closed)) {
-            // This might occur if the broadcast connection disappears completely
-            // For example, loss of network connectivity
-            // Clients should rely on the missing heartbeat to determine that data is invalid
-            warn!("Could not broadcast exchange closed message: {}", e);
-        }
-    }
+    generic_on_close!(Exchange::Bitfinex);
 }
 
 impl MarketHandler for BitfinexHandler {
@@ -142,38 +81,41 @@ impl ws::Factory for BitfinexFactory {
     }
 }
 
-fn handle_response(response: Response, channels: &mut ChannelsMap) -> BroadcastType {
-    match response {
-        // TODO: remove pair code duplication
-        Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
-            let pair = channels.get(&channel_id).expect(
-                &format!("Could not find channel ID {}", channel_id));
-            map_orderbook_update(*pair, price, amount)
-        },
-        Response::Trade(channel_id, _trade_update_type, trades) => {
-            let pair = channels.get(&channel_id).expect(
-                &format!("Could not find channel ID {}", channel_id));
-            map_trade(*pair, trades)
-        },
-        Response::SubscribeConfirmation { channel_id, symbol, .. } => {
-            let pair_code = map_pair_code(&symbol);
-            debug!("{} pair code {:?} maps to channel ID {}", Exchange::Bitfinex, pair_code, channel_id);
-            channels.insert(channel_id, pair_code);
-            BroadcastType::None
-        },
-        Response::InitialOrderbook(channel_id, orders) => {
-            let pair = channels.get(&channel_id).expect(
-                &format!("Could not find channel ID {}", channel_id));
-            map_initial_orderbook(*pair, orders)
-        },
-        Response::InitialTrade(channel_id, trades) => {
-            let pair = channels.get(&channel_id).expect(
-                &format!("Could not find channel ID {}", channel_id));
-            map_initial_trades(*pair, trades)
+impl BitfinexHandler {
+    fn handle_response(&mut self, response: Response) -> BroadcastType {
+        match response {
+            // TODO: remove pair code duplication
+            Response::OrderbookUpdate(channel_id, (_, price, amount)) => {
+                let pair = self.channels.get(&channel_id).expect(
+                    &format!("Could not find channel ID {}", channel_id));
+                map_orderbook_update(*pair, price, amount)
+            },
+            Response::Trade(channel_id, _trade_update_type, trades) => {
+                let pair = self.channels.get(&channel_id).expect(
+                    &format!("Could not find channel ID {}", channel_id));
+                map_trade(*pair, trades)
+            },
+            Response::SubscribeConfirmation { channel_id, symbol, .. } => {
+                let pair_code = map_pair_code(&symbol);
+                debug!("{} pair code {:?} maps to channel ID {}", Exchange::Bitfinex, pair_code, channel_id);
+                self.channels.insert(channel_id, pair_code);
+                BroadcastType::None
+            },
+            Response::InitialOrderbook(channel_id, orders) => {
+                let pair = self.channels.get(&channel_id).expect(
+                    &format!("Could not find channel ID {}", channel_id));
+                map_initial_orderbook(*pair, orders)
+            },
+            Response::InitialTrade(channel_id, trades) => {
+                let pair = self.channels.get(&channel_id).expect(
+                    &format!("Could not find channel ID {}", channel_id));
+                map_initial_trades(*pair, trades)
+            }
+            _ => BroadcastType::None
         }
-        _ => BroadcastType::None
     }
 }
+
 
 // Pairs list: https://api.bitfinex.com/v1/symbols
 fn map_pair_code(pair_code: &str) -> CurrencyPair {
